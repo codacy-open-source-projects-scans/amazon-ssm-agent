@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	maxOrchestrationDirectoryDeletions int = 100
+	maxOrchestrationDirectoryDeletions int = 1000
 )
 
 type validString func(string) bool
@@ -253,12 +253,13 @@ func isAssociationRunDirName(dirName string) (matched bool) {
 func cleanupAssociationDirectory(log log.T, deletedCount int, commandOrchestrationPath string, retentionDurationHours int) (canDeleteDirectory bool, deletedCountAfter int) {
 	subdirNames, err := fileutil.GetDirectoryNames(commandOrchestrationPath)
 	if err != nil {
-		log.Debugf("Error reading association orchestration directory %v: %v", commandOrchestrationPath, err)
+		log.Infof("Error reading association orchestration directory %v: %v", commandOrchestrationPath, err)
 		return false, deletedCount
 	}
 
 	canDeleteDirectory = true
 
+	log.Debugf("Starting deletion of association directories")
 	for _, subdirName := range subdirNames {
 		if deletedCount >= maxOrchestrationDirectoryDeletions {
 			log.Infof("Reached max number of deletions for orchestration directories: %v", deletedCount)
@@ -287,6 +288,7 @@ func cleanupAssociationDirectory(log log.T, deletedCount int, commandOrchestrati
 		deletedCount += 1
 	}
 
+	log.Debugf("Finished deleting %v association directories", deletedCount)
 	return canDeleteDirectory, deletedCount
 }
 
@@ -307,7 +309,7 @@ func isLegacyAssociationDirectory(log log.T, commandOrchestrationPath string) (b
 	return false, nil
 }
 
-// Global variables to throttle the impact of constantly rechecking the stale orchestation files
+// Global variables to throttle the impact of constantly rechecking the stale orchestration files
 var cleanupLock sync.Mutex
 var inCleanup = make(map[string]bool)
 var nextCleanup = make(map[string]time.Time) // okay that these will default to start of epoch
@@ -334,7 +336,7 @@ func releaseLock(name string) {
 func updateTime(name string) {
 	cleanupLock.Lock()
 	defer cleanupLock.Unlock()
-	nextCleanup[name] = time.Now().Add(time.Minute * 60)
+	nextCleanup[name] = time.Now().Add(time.Minute * 15)
 }
 
 // DeleteOldOrchestrationDirectories deletes expired orchestration directories based on retentionDurationHours and associationRetentionDurationHours.
@@ -355,7 +357,7 @@ func DeleteOldOrchestrationDirectories(log log.T, instanceID, orchestrationRootD
 
 	orchestrationRootDir, dirNames, err := getOrchestrationDirectoryNames(log, instanceID, orchestrationRootDirName, appconfig.DefaultDocumentRootDirName)
 	if err != nil {
-		log.Debugf("Failed to get orchestration directories under %v", err)
+		log.Errorf("Failed to get orchestration directories under %v", err)
 		return
 	}
 
@@ -364,7 +366,7 @@ func DeleteOldOrchestrationDirectories(log log.T, instanceID, orchestrationRootD
 	deletedCount := 0
 	for _, dirName := range dirNames {
 		if deletedCount >= maxOrchestrationDirectoryDeletions {
-			log.Infof("Reached max number of deletions for orchestration directories: %v", deletedCount)
+			log.Warnf("Reached max number of deletions for orchestration directories: %v", deletedCount)
 			break
 		}
 
@@ -394,7 +396,7 @@ func DeleteOldOrchestrationDirectories(log log.T, instanceID, orchestrationRootD
 	}
 
 	updateTime(orchestrationRootDirName)
-	log.Debugf("Completed orchestration directory clean up")
+	log.Debugf("Completed orchestration directory clean up of %v items", deletedCount)
 
 }
 
@@ -406,6 +408,14 @@ func DeleteSessionOrchestrationDirectories(log log.T, instanceID, orchestrationR
 			log.Errorf("Stacktrace:\n%s", debug.Stack())
 		}
 	}()
+
+	// Add lock to prevent quadratic fs lookup for large volume session users.
+	sessionLockName := orchestrationRootDirName + appconfig.DefaultSessionRootDirName
+	if !getLock(sessionLockName) {
+		return
+	}
+	defer releaseLock(sessionLockName)
+
 	orchestrationRootDir, dirNames, err := getOrchestrationDirectoryNames(log, instanceID, orchestrationRootDirName, appconfig.DefaultSessionRootDirName)
 	if err != nil {
 		log.Debugf("Failed to get orchestration directories under %v", err)
@@ -444,10 +454,10 @@ func DeleteSessionOrchestrationDirectories(log log.T, instanceID, orchestrationR
 			// Deletion of both document state and orchestration file was successful
 			deletedCount += 1
 		}
-
 	}
 
-	log.Debugf("Completed orchestration directory clean up")
+	updateTime(sessionLockName)
+	log.Debugf("Completed session orchestration directory clean up of %v items", deletedCount)
 }
 
 // isOlderThan checks whether the file is older than the retention duration
