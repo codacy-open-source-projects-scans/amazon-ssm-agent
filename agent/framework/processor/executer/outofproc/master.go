@@ -24,9 +24,13 @@ type Backend messaging.MessagingBackend
 
 // see differences between zombie and orphan: https://www.gmarik.info/blog/2012/orphan-vs-zombie-vs-daemon-processes/
 const (
-	//TODO prolong this value once we go to production
-	defaultZombieProcessTimeout = 3 * time.Second
-	//command maximum timeout
+	// Give ample time for messaging block to successfully finish processing by itself.
+	// Before sending the force shutdown signal in case it does not correctly exit.
+	defaultZombieProcessTimeout = 60 * time.Second
+	// If a process is cancelled, we give additional time for the cancellation process
+	// to finish itself, and then send the force shutdown signal.
+	defaultCancelledProcessTimeout = 300 * time.Second
+	// command maximum timeout
 	defaultOrphanProcessTimeout = 172800 * time.Second
 )
 
@@ -124,27 +128,33 @@ func (e *OutOfProcExecuter) Run(
 // Executer however does hold a timer to the worker to forcefully termniate both of them
 func (e *OutOfProcExecuter) messaging(log log.T, ipc filewatcherbasedipc.IPCChannel, resChan chan contracts.DocumentResult, cancelFlag task.CancelFlag, stopTimer chan bool) {
 
+	// backup current time in case outofproc execution failed and cannot correctly return PluginResult
+	backupStartTime := time.Now()
+
 	//handoff reply functionalities to data backend.
 	backend := messaging.NewExecuterBackend(log, resChan, e.docState, cancelFlag)
+
 	//handoff the data backend to messaging worker
 	if err := messaging.Messaging(log, ipc, backend, stopTimer); err != nil {
 		//the messaging worker encountered error, either ipc run into error or data backend throws error
 		log.Errorf("messaging worker encountered error: %v", err)
-		log.Debugf("document state during messaging worker error: %v", e.docState.DocumentInformation.DocumentStatus)
+		log.Errorf("document state during messaging worker error: %v", e.docState.DocumentInformation.DocumentStatus)
 		if e.docState.DocumentInformation.DocumentStatus == contracts.ResultStatusInProgress ||
 			e.docState.DocumentInformation.DocumentStatus == "" ||
 			e.docState.DocumentInformation.DocumentStatus == contracts.ResultStatusNotStarted ||
 			e.docState.DocumentInformation.DocumentStatus == contracts.ResultStatusSuccessAndReboot {
 			e.docState.DocumentInformation.DocumentStatus = contracts.ResultStatusFailed
 			log.Info("document failed half way, sending fail message...")
-			resChan <- e.generateUnexpectedFailResult(fmt.Sprintf("document process failed unexpectedly: %s , check [ssm-document-worker]/[ssm-session-worker] log for crash reason", err))
+			errMsg := fmt.Sprintf("document process failed unexpectedly: %s , check [ssm-document-worker]/[ssm-session-worker] log for crash reason", err)
+			resChan <- e.generateUnexpectedFailResult(errMsg, backupStartTime)
 		}
 		//destroy the channel
 		ipc.Destroy()
 	}
 }
 
-func (e *OutOfProcExecuter) generateUnexpectedFailResult(errMsg string) contracts.DocumentResult {
+func (e *OutOfProcExecuter) generateUnexpectedFailResult(errMsg string, startTime time.Time) contracts.DocumentResult {
+	endTime := time.Now()
 	var docResult contracts.DocumentResult
 	docResult.MessageID = e.docState.DocumentInformation.MessageID
 	docResult.AssociationID = e.docState.DocumentInformation.AssociationID
@@ -156,6 +166,8 @@ func (e *OutOfProcExecuter) generateUnexpectedFailResult(errMsg string) contract
 	res := e.docState.InstancePluginsInformation[0].Result
 	res.Output = errMsg
 	res.Status = contracts.ResultStatusFailed
+	res.StartDateTime = startTime
+	res.EndDateTime = endTime
 	docResult.PluginResults[e.docState.InstancePluginsInformation[0].Id] = &res
 	return docResult
 }
@@ -195,7 +207,7 @@ func (e *OutOfProcExecuter) initialize(stopTimer chan bool) (ipc filewatcherbase
 			log.Infof("process: %v not found, treat as exited", procInfo.Pid)
 			stopTime = defaultZombieProcessTimeout
 		}
-		go timeout(stopTimer, stopTime, e.cancelFlag)
+		go timeoutOrCancel(stopTimer, stopTime, e.cancelFlag)
 	} else {
 		log.Debug("channel not found, starting a new process...")
 		var workerName string
@@ -251,10 +263,10 @@ func (e *OutOfProcExecuter) WaitForProcess(stopTimer chan bool, process proc.OSP
 		log.Debugf("process: %v exited successfully, trying to stop messaging worker", process.Pid())
 	}
 	//waitReturned = true
-	timeout(stopTimer, defaultZombieProcessTimeout, e.cancelFlag)
+	timeout(stopTimer, defaultZombieProcessTimeout)
 }
 
-func timeout(stopTimer chan bool, duration time.Duration, cancelFlag task.CancelFlag) {
+func timeoutOrCancel(stopTimer chan bool, duration time.Duration, cancelFlag task.CancelFlag) {
 	stopChan := make(chan bool, 1)
 	//TODO refactor cancelFlag.Wait() to return channel instead of blocking call
 	go func() {
@@ -265,6 +277,11 @@ func timeout(stopTimer chan bool, duration time.Duration, cancelFlag task.Cancel
 	case <-time.After(duration):
 		stopTimer <- true
 	case <-stopChan:
+		go timeout(stopTimer, defaultCancelledProcessTimeout)
 	}
+}
 
+func timeout(stopTimer chan bool, duration time.Duration) {
+	<-time.After(duration)
+	stopTimer <- true
 }
