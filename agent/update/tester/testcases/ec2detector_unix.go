@@ -17,55 +17,41 @@
 package testcases
 
 import (
-	"fmt"
-	"io/ioutil"
+	"errors"
 
-	testCommon "github.com/aws/amazon-ssm-agent/agent/update/tester/common"
+	"github.com/aws/amazon-ssm-agent/agent/log"
+	"github.com/aws/amazon-ssm-agent/agent/platform"
 )
 
-const (
-	ec2DetectorTestCaseName = "UnixEc2Detector"
+const ec2DetectorTestCaseName = "UnixEc2Detector"
 
-	nitroVendorSystemInfoParam = "/sys/class/dmi/id/sys_vendor"
-	nitroUuidSystemInfoParam   = "/sys/class/dmi/id/product_uuid"
-
-	xenVersionSystemInfoParam = "/sys/hypervisor/version/extra"
-	xenUuidSystemInfoParam    = "/sys/hypervisor/uuid"
-)
-
-var readFile = func(filePath string) string {
-	bytes, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return ""
-	}
-
-	return cleanBiosString(string(bytes))
-}
-
-func getSystemHostInfo() (HostInfo, error) {
+func getSystemHostInfo(log log.T) (HostInfo, error) {
 	var hostInfo HostInfo
 
-	hostInfo.Vendor = readFile(nitroVendorSystemInfoParam)
-	hostInfo.Version = readFile(xenVersionSystemInfoParam)
+	vendor, _ := platform.GetSystemInfo(log, platform.NitroVendorSystemInfoParamKey)
+	hostInfo.Vendor = cleanBiosString(vendor)
+	version, _ := platform.GetSystemInfo(log, platform.XenVersionSystemInfoParamKey)
+	hostInfo.Version = cleanBiosString(version)
 
 	if hostInfo.Version == "" && hostInfo.Vendor == "" {
-		return hostInfo, fmt.Errorf(failedToGetVendorAndVersion)
+		return hostInfo, errors.New(failedToGetVendorAndVersion)
 	}
 
-	if hostInfo.Uuid = readFile(xenUuidSystemInfoParam); hostInfo.Uuid == "" {
-		if hostInfo.Uuid = readFile(nitroUuidSystemInfoParam); hostInfo.Uuid == "" {
-			return hostInfo, fmt.Errorf(failedToGetUuid)
-		}
+	uuid, _ := platform.GetSystemInfo(log, platform.XenUuidSystemInfoParamKey)
+	hostInfo.Uuid = cleanBiosString(uuid)
+	if hostInfo.Uuid == "" {
+		uuid, _ = platform.GetSystemInfo(log, platform.NitroUuidSystemInfoParamKey)
+		hostInfo.Uuid = cleanBiosString(uuid)
+	}
+
+	if hostInfo.Uuid == "" {
+		return hostInfo, errors.New(failedToGetUuid)
 	}
 
 	return hostInfo, nil
 }
 
 func (l *Ec2DetectorTestCase) queryHostInfo() {
-	l.systemHostInfo, l.systemErr = getSystemHostInfo()
-	l.smbiosHostInfo, l.smbiosErr = getSmbiosHostInfo(l.context.Log())
-}
-
-func (l *Ec2DetectorTestCase) generatePlatformTestResult() (testCommon.TestResult, string) {
-	return l.generateTestResult(l.systemHostInfo, l.systemErr, l.smbiosHostInfo, l.smbiosErr)
+	l.primaryInfo, l.primaryErr = getSystemHostInfo(l.context.Log())
+	l.secondaryInfo, l.secondaryErr = getSmbiosHostInfo(l.context.Log())
 }

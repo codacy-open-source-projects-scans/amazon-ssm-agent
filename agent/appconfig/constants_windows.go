@@ -174,7 +174,12 @@ var DefaultCustomInventoryFolder string
 // SSM Agent Update download legacy path
 var LegacyUpdateDownloadFolder string
 
+// TelemetryDataStorePath specifies the directory where telemetry data is collected before sending
+var TelemetryDataStorePath string
+
 var RuntimeConfigFolderPath string
+
+var DynamicConfigFolderPath string
 
 func init() {
 	/*
@@ -216,7 +221,8 @@ func init() {
 	UpdaterArtifactsRoot = filepath.Join(SSMDataPath, "Update")
 	UpdaterPidLockfile = filepath.Join(SSMDataPath, "update.lock")
 	LegacyUpdateDownloadFolder = DownloadRoot
-
+	TelemetryDataStorePath = filepath.Join(SSMDataPath, "telemetry")
+	DynamicConfigFolderPath = filepath.Join(SSMDataPath, "DynamicConfig")
 	DefaultCustomInventoryFolder = filepath.Join(SSMDataPath, "Inventory", "Custom")
 	EC2UpdateArtifactsRoot = filepath.Join(programData, EC2ConfigAppDataFolder, "Updater")
 	EC2UpdaterDownloadRoot = filepath.Join(programData, EC2ConfigAppDataFolder, "Downloads")

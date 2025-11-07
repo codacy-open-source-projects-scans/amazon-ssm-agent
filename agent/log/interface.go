@@ -13,6 +13,8 @@
 
 package log
 
+import "github.com/aws/amazon-ssm-agent/agent/telemetry/telemetrylog"
+
 // BasicT represents structs capable of logging messages.
 // This interface matches seelog.LoggerInterface.
 type BasicT interface {
@@ -77,7 +79,10 @@ type BasicT interface {
 // T represents structs capable of logging messages, and context management.
 type T interface {
 	BasicT
+	telemetrylog.TelemetryLog
+
 	Log(i ...interface{})
 	WithContext(context ...string) (contextLogger T)
+	WithTelemetryNamespace(namespace string) (contextLogger T)
 	WriteEvent(eventType string, agentVersion string, event string)
 }

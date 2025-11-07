@@ -271,7 +271,7 @@ func s3Download(context context.T, amazonS3URL s3util.AmazonS3URL, destFile stri
 		params.ExpectedBucketOwner = aws.String(expectedBucketOwner)
 	}
 
-	if fileutil.Exists(destFile) == true && fileutil.Exists(eTagFile) == true {
+	if fileutil.Exists(destFile) && fileutil.Exists(eTagFile) {
 		var existingETag string
 		existingETag, err = fileutil.ReadAllText(eTagFile)
 		if err != nil {
@@ -404,7 +404,7 @@ func Download(context context.T, input DownloadInput) (output DownloadOutput, er
 		err = nil
 	}
 
-	if isLocalFile == true {
+	if isLocalFile {
 		err = fmt.Errorf("source is a local file, skipping download. %v", input.SourceURL)
 		output.LocalFilePath = input.SourceURL
 		output.IsUpdated = false
@@ -423,7 +423,11 @@ func Download(context context.T, input DownloadInput) (output DownloadOutput, er
 			tempOutput, err = s3Download(context, amazonS3URL, output.LocalFilePath, input.ExpectedBucketOwner)
 			if err != nil {
 				log.Info("An error occurred when attempting s3 download. Attempting http/https download as fallback.")
-				tempOutput, err = httpDownload(context, input.SourceURL, output.LocalFilePath, input.ExpectedBucketOwner)
+				s3HttpURL := input.SourceURL
+				if context.AppConfig().Agent.UseDualStackEndpoint {
+					s3HttpURL = convertToS3DualStackURL(input.SourceURL, amazonS3URL)
+				}
+				tempOutput, err = httpDownload(context, s3HttpURL, output.LocalFilePath, input.ExpectedBucketOwner)
 			}
 			output = tempOutput
 		} else {
@@ -435,12 +439,67 @@ func Download(context context.T, input DownloadInput) (output DownloadOutput, er
 		}
 
 		isLocalFile, err = fileutil.LocalFileExist(output.LocalFilePath)
-		if isLocalFile == true {
+		if isLocalFile {
 			output.IsHashMatched, err = VerifyHash(log, input, output)
 		}
 	}
 
 	return
+}
+
+func setupDestinationDirectory(context context.T, input DownloadInput) (localFilePath string, err error) {
+	log := context.Log()
+
+	fileURL, err := url.Parse(input.SourceURL)
+	if err != nil {
+		log.Errorf("url parsing failed. %v", err)
+		return
+	}
+
+	// default destination directory is app config download root
+	destinationDir := input.DestinationDirectory
+	if destinationDir == "" {
+		destinationDir = appconfig.DownloadRoot
+	}
+
+	err = fileutil.MakeDirs(destinationDir)
+	if err != nil {
+		err = fmt.Errorf("failed to create directory=%v, err=%v", destinationDir, err)
+	}
+	urlHash := sha1.Sum([]byte(fileURL.String()))
+	localFilePath = filepath.Join(destinationDir, fmt.Sprintf("%x", urlHash))
+	return
+}
+
+func DownloadUsingHttp(context context.T, input DownloadInput) (*DownloadOutput, error) {
+	log := context.Log()
+	output := DownloadOutput{}
+	var err error
+
+	output.LocalFilePath, err = setupDestinationDirectory(context, input)
+	if err != nil {
+		return nil, err
+	}
+
+	output, err = httpDownload(context, input.SourceURL, output.LocalFilePath, "")
+	if err != nil {
+		err = fmt.Errorf("Download failed due to %v", err)
+		return nil, err
+	}
+
+	doesLocalFileExist, err := fileutil.LocalFileExist(output.LocalFilePath)
+	if err != nil {
+		err = fmt.Errorf("could not read output file %v", err)
+		return nil, err
+	}
+	if doesLocalFileExist {
+		output.IsHashMatched, err = VerifyHash(log, input, output)
+		if err != nil {
+			err = fmt.Errorf("could not verify hash -  %v", err)
+			return nil, err
+		}
+	}
+	return &output, nil
 }
 
 // VerifyHash verifies the hash of the url file as per specified hash algorithm type and its value
@@ -539,4 +598,21 @@ func Md5HashValue(log log.T, filePath string) (hash string, err error) {
 	hash = hex.EncodeToString(hasher.Sum(nil))
 	log.Debugf("Hash=%v, FilePath=%v", hash, filePath)
 	return
+}
+
+// convertToDualStackURL converts a regional non-VPCE S3 URL to use dual-stack endpoint
+func convertToS3DualStackURL(originalURL string, amazonS3URL s3util.AmazonS3URL) string {
+	// Convert to dual-stack format
+	// Path-style: https://s3.us-east-1.amazonaws.com/mybucket/a/b/c -> https://s3.dualstack.us-east-1.amazonaws.com/mybucket/a/b/c
+	// Virtual-hosted-style: https://mybucket.s3.us-east-1.amazonaws.com/a/b/c -> https://mybucket.s3.dualstack.us-east-1.amazonaws.com/a/b/c
+
+	// Keep as original if the URL is Vpce, global, or dual-stack
+
+	regularUrlPrefix := "s3." + amazonS3URL.Region + "."
+	dualStackUrlPrefix := "s3.dualstack." + amazonS3URL.Region + "."
+	if amazonS3URL.IsVpceURL || strings.Contains(originalURL, dualStackUrlPrefix) {
+		return originalURL
+	}
+
+	return strings.Replace(originalURL, regularUrlPrefix, dualStackUrlPrefix, 1)
 }

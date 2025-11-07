@@ -1,4 +1,4 @@
-// Copyright 2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"). You may not
 // use this file except in compliance with the License. A copy of the
@@ -17,17 +17,37 @@
 package helper
 
 import (
-	"io/ioutil"
+	"errors"
 	"strings"
+
+	"github.com/aws/amazon-ssm-agent/agent/log"
+	"github.com/aws/amazon-ssm-agent/agent/platform"
 )
 
-var readFile = ioutil.ReadFile
-
-func (*detectorHelper) GetSystemInfo(filePath string) string {
-	bytes, err := readFile(filePath)
-	if err != nil {
-		bytes = []byte("")
+var GetHostInfo = func(log log.T, paramKey, errCodePrefix string) (string, string) {
+	errCodePrefix = errCodePrefix + "."
+	paramValue, err := platform.GetSystemInfo(log, paramKey)
+	if errCode := checkError(err); errCode != "" {
+		return "", errCodePrefix + errCode
+	} else if strings.TrimSpace(paramValue) == "" {
+		return "", errCodePrefix + "E"
+	} else {
+		return paramValue, ""
 	}
+}
 
-	return strings.TrimSpace(string(bytes))
+func checkError(err error) string {
+	if err != nil {
+		if errors.Is(err, platform.ErrFileNotFound) {
+			return "FNF"
+		} else if errors.Is(err, platform.ErrFilePermission) {
+			return "FP"
+		} else if errors.Is(err, platform.ErrFileRead) {
+			return "FR"
+		} else {
+			return "SG"
+		}
+	} else {
+		return ""
+	}
 }

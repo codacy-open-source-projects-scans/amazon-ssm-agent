@@ -44,8 +44,13 @@ func NewMockLog() *Mock {
 	log.On("Warnf", mock.AnythingOfType("string"), mock.Anything).Return(mock.AnythingOfType("error"))
 	log.On("Tracef", mock.Anything, mock.Anything).Return()
 	log.On("Infof", mock.Anything, mock.Anything).Return()
+	log.On("TelemetryWarn", mock.Anything).Return(mock.AnythingOfType("error"))
+	log.On("TelemetryWarnf", mock.AnythingOfType("string"), mock.Anything).Return(mock.AnythingOfType("error"))
+	log.On("TelemetryError", mock.Anything).Return(mock.AnythingOfType("error"))
+	log.On("TelemetryErrorf", mock.AnythingOfType("string"), mock.Anything).Return(mock.AnythingOfType("error"))
 	log.On("Closed").Return(false)
 	log.On("WithContext", mock.Anything).Return(log)
+	log.On("WithTelemetryNamespace", mock.Anything).Return(log)
 	log.On("Log", mock.Anything).Return()
 	return log
 }
@@ -79,6 +84,7 @@ func NewMockLogWithContext(ctx string) *Mock {
 	log.On("Tracef", mock.Anything, mock.Anything).Return()
 	log.On("Infof", mock.Anything, mock.Anything).Return()
 	log.On("Closed").Return(false)
+	log.On("WithTelemetryNamespace", mock.Anything).Return(log)
 	log.On("Log", mock.Anything).Return()
 	return log
 }
@@ -89,6 +95,15 @@ func (_m *Mock) WithContext(context ...string) (contextLogger log.T) {
 		fmt.Printf("WithContext: %v", context)
 	}
 	ret := _m.Called(context)
+	return ret.Get(0).(log.T)
+}
+
+func (_m *Mock) WithTelemetryNamespace(namespace string) (contextLogger log.T) {
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Printf("WithTelemetryNamespace: %v", namespace)
+	}
+	ret := _m.Called(namespace)
 	return ret.Get(0).(log.T)
 }
 
@@ -135,7 +150,19 @@ func (_m *Mock) Warnf(format string, params ...interface{}) error {
 	msg := fmt.Sprintf("Warnf: "+format, params...)
 	if !_m.silent {
 		fmt.Print(_m.context)
-		fmt.Printf(msg)
+		fmt.Print(msg)
+		fmt.Println()
+	}
+	_m.Called(format, params)
+	return errors.New(msg)
+}
+
+// TelemetryWarnf mocks the TelemetryWarnf function.
+func (_m *Mock) TelemetryWarnf(format string, params ...interface{}) error {
+	msg := fmt.Sprintf("TelemetryWarnf: "+format, params...)
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Print(msg)
 		fmt.Println()
 	}
 	_m.Called(format, params)
@@ -147,7 +174,19 @@ func (_m *Mock) Errorf(format string, params ...interface{}) error {
 	msg := fmt.Sprintf("Errorf: "+format, params...)
 	if !_m.silent {
 		fmt.Print(_m.context)
-		fmt.Printf(msg)
+		fmt.Print(msg)
+		fmt.Println()
+	}
+	_m.Called(format, params)
+	return errors.New(msg)
+}
+
+// TelemetryErrorf mocks the TelemetryErrorf function.
+func (_m *Mock) TelemetryErrorf(format string, params ...interface{}) error {
+	msg := fmt.Sprintf("TelemetryErrorf: "+format, params...)
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Print(msg)
 		fmt.Println()
 	}
 	_m.Called(format, params)
@@ -159,7 +198,19 @@ func (_m *Mock) Criticalf(format string, params ...interface{}) error {
 	msg := fmt.Sprintf("Criticalf: "+format, params...)
 	if !_m.silent {
 		fmt.Print(_m.context)
-		fmt.Printf(msg)
+		fmt.Print(msg)
+		fmt.Println()
+	}
+	_m.Called(format, params)
+	return errors.New(msg)
+}
+
+// TelemetryCriticalf mocks the TelemetryCriticalf function.
+func (_m *Mock) TelemetryCriticalf(format string, params ...interface{}) error {
+	msg := fmt.Sprintf("TelemetryCriticalf: "+format, params...)
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Print(msg)
 		fmt.Println()
 	}
 	_m.Called(format, params)
@@ -209,12 +260,36 @@ func (_m *Mock) Warn(v ...interface{}) error {
 	return errors.New(msg)
 }
 
+// TelemetryWarn mocks the TelemetryWarn function.
+func (_m *Mock) TelemetryWarn(v ...interface{}) error {
+	msg := fmt.Sprint("TelemetryWarn: ") + fmt.Sprint(v...)
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Print(msg)
+		fmt.Println()
+	}
+	_m.Called(v)
+	return errors.New(msg)
+}
+
 // Error mocks the Error function.
 func (_m *Mock) Error(v ...interface{}) error {
 	msg := fmt.Sprint("Error: ") + fmt.Sprint(v...)
 	if !_m.silent {
 		fmt.Print(_m.context)
-		fmt.Printf(msg)
+		fmt.Print(msg)
+		fmt.Println()
+	}
+	_m.Called(v)
+	return errors.New(msg)
+}
+
+// TelemetryError mocks the TelemetryError function.
+func (_m *Mock) TelemetryError(v ...interface{}) error {
+	msg := fmt.Sprint("TelemetryError: ") + fmt.Sprint(v...)
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Print(msg)
 		fmt.Println()
 	}
 	_m.Called(v)
@@ -226,6 +301,17 @@ func (_m *Mock) Critical(v ...interface{}) error {
 	if !_m.silent {
 		fmt.Print(_m.context)
 		fmt.Print("Critical: ")
+		fmt.Println(v...)
+	}
+	ret := _m.Called(v)
+	return ret.Error(0)
+}
+
+// TelemetryCritical mocks the TelemetryCritical function.
+func (_m *Mock) TelemetryCritical(v ...interface{}) error {
+	if !_m.silent {
+		fmt.Print(_m.context)
+		fmt.Print("TelemetryCritical: ")
 		fmt.Println(v...)
 	}
 	ret := _m.Called(v)

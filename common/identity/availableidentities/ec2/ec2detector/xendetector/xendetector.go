@@ -20,6 +20,7 @@ package xendetector
 import (
 	"strings"
 
+	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/common/identity/availableidentities/ec2/ec2detector/helper"
 )
 
@@ -28,42 +29,38 @@ const (
 	Name                  = "Xen"
 )
 
+var getVendor, getUuid = helper.GetHostInfo, helper.GetHostInfo
+
 type xenDetector struct {
-	helper  helper.DetectorHelper
-	version string
-	uuid    string
+	uuidParamKey    string
+	versionParamKey string
 }
 
-func (d *xenDetector) getUuid() string {
-	if d.uuid != "" {
-		return d.uuid
+func (d *xenDetector) IsEc2(log log.T) (bool, []string) {
+	var errCodes []string
+	versionInfo, versionErrCode := getVendor(log, d.versionParamKey, "XV")
+	if versionErrCode != "" {
+		errCodes = append(errCodes, versionErrCode)
+	}
+	uuidInfo, uuidErrCode := getUuid(log, d.uuidParamKey, "XU")
+	if uuidErrCode != "" {
+		errCodes = append(errCodes, uuidErrCode)
 	}
 
-	d.uuid = d.helper.GetSystemInfo(xenUuidSystemInfoParam)
-	return d.uuid
-}
-
-func (d *xenDetector) getVersion() string {
-	if d.version != "" {
-		return d.version
+	if len(errCodes) > 0 {
+		return false, errCodes
+	} else {
+		return strings.HasSuffix(strings.ToLower(versionInfo), expectedVersionSuffix) && helper.MatchUuid(log, uuidInfo), nil
 	}
-
-	d.version = d.helper.GetSystemInfo(xenVersionSystemInfoParam)
-	return d.version
-}
-
-func (d *xenDetector) IsEc2() bool {
-	if !strings.HasSuffix(strings.ToLower(d.getVersion()), expectedVersionSuffix) {
-		return false
-	}
-
-	return d.helper.MatchUuid(d.getUuid())
 }
 
 func (d *xenDetector) GetName() string {
 	return Name
 }
 
-func New(helper helper.DetectorHelper) *xenDetector {
-	return &xenDetector{helper: helper}
+func New(uuidParamKey, versionParamKey string) *xenDetector {
+	return &xenDetector{
+		uuidParamKey:    uuidParamKey,
+		versionParamKey: versionParamKey,
+	}
 }

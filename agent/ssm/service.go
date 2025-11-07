@@ -16,12 +16,16 @@ package ssm
 import (
 	"fmt"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/amazon-ssm-agent/agent/context"
 	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/agent/platform"
 	"github.com/aws/amazon-ssm-agent/agent/sdkutil"
+	"github.com/aws/amazon-ssm-agent/common/identity/availableidentities/ec2"
+	"github.com/aws/amazon-ssm-agent/common/identity/availableidentities/ec2/ec2detector"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -72,13 +76,16 @@ type Service interface {
 	GetDecryptedParameters(log log.T, paramNames []string) (response *ssm.GetParametersOutput, err error)
 }
 
-var ssmStopPolicy *sdkutil.StopPolicy
-
 // sdkService is an service wrapper that delegates to the ssm sdk.
 type sdkService struct {
 	context context.T
 	sdk     ssmiface.SSMAPI
 }
+
+var (
+	ssmStopPolicy           *sdkutil.StopPolicy
+	ec2DetectionResultsSent atomic.Bool
+)
 
 // NewService creates a new SSM service instance.
 func NewService(context context.T) Service {
@@ -100,7 +107,6 @@ func NewService(context context.T) Service {
 
 	sess := session.New(awsConfig)
 	sess.Handlers.Build.PushBack(request.MakeAddToUserAgentHandler(appConfig.Agent.Name, appConfig.Agent.Version))
-
 	ssmService := ssm.New(sess)
 	return NewSSMService(context, ssmService)
 }
@@ -263,17 +269,14 @@ func (svc *sdkService) UpdateInstanceInformation(
 		return nil, fmt.Errorf("Cannot report platform type of unrecognized OS. %v", goOS)
 	}
 
-	if ip, err := platform.IP(); err == nil {
+	if ip, err := platform.IP(log); err == nil {
 		params.IPAddress = aws.String(ip)
 	} else {
 		log.Warn(err)
 	}
 
-	if h, err := platform.Hostname(log); err == nil {
-		params.ComputerName = aws.String(h)
-	} else {
-		log.Warn(err)
-	}
+	params.ComputerName = aws.String(platform.Hostname(log))
+
 	if instID, err := svc.context.Identity().InstanceID(); err == nil {
 		params.InstanceId = aws.String(instID)
 	} else {
@@ -329,6 +332,30 @@ func (svc *sdkService) UpdateEmptyInstanceInformation(
 		params.InstanceId = aws.String(instID)
 	} else {
 		return nil, err
+	}
+
+	// Send the EC2Detector and IMDS EC2 status, and any EC2Dtector errors with the UpdateInstanceInformation request, only once during the Agent startup
+	if ec2DetectionResultsSent.CompareAndSwap(false, true) {
+		var imdsEC2Status bool
+		if svc.context.Identity().IdentityType() == ec2.IdentityType {
+			_, err := svc.context.Identity().InstanceID()
+			imdsEC2Status = err == nil
+		}
+		ec2DetectorStatus, errCodes := ec2detector.New(log).IsEC2Instance()
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("EC2DetectorStatus:%v_IMDSEC2Status:%v", ec2DetectorStatus, imdsEC2Status))
+		if len(errCodes) > 0 {
+			sb.WriteString("_EC2DetectorErrors:")
+			for i, errCode := range errCodes {
+				sb.WriteString(errCode)
+				if i < len(errCodes)-1 {
+					sb.WriteString(",")
+				}
+			}
+		}
+
+		params.AgentStatus = aws.String(sb.String())
 	}
 
 	log.Debug("Calling UpdateInstanceInformation with params", params)

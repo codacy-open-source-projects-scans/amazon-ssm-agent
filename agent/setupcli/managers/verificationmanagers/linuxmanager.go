@@ -21,17 +21,14 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
-	"strings"
 
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
-	"github.com/aws/amazon-ssm-agent/agent/fileutil"
 	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/agent/setupcli/managers/common"
 )
 
 var (
-	ioWriteUtil      = ioutil.WriteFile
-	fileUtilMakeDirs = fileutil.MakeDirs
+	ioWriteUtil = ioutil.WriteFile
 )
 
 type linuxManager struct {
@@ -41,6 +38,10 @@ type linuxManager struct {
 func (l *linuxManager) createPublicKeyFile(publicKeyPath string) error {
 	data := GetLinuxPublicKey()
 	return ioWriteUtil(publicKeyPath, data, appconfig.ReadWriteAccess)
+}
+
+func (l *linuxManager) createKeyRingFile(keyRingFilePath string) error {
+	return ioWriteUtil(keyRingFilePath, []byte{}, appconfig.ReadWriteAccess)
 }
 
 // VerifySignature verifies the agent binary signature
@@ -63,14 +64,16 @@ func (l *linuxManager) VerifySignature(log log.T, signaturePath string, artifact
 	}
 
 	tempKeyRing := "keyring"
-	keyringPath := filepath.Join(artifactsPath, tempKeyRing)
-	err := fileUtilMakeDirs(keyringPath)
-	if err != nil {
-		return fmt.Errorf("keyring directory creation failed: %v", err)
+	keyringFile := filepath.Join(artifactsPath, tempKeyRing+gpgExtension)
+
+	//create key ring file
+	log.Infof("Creating key ring file at: %s", keyringFile)
+	if err := l.createKeyRingFile(keyringFile); err != nil {
+		return fmt.Errorf("failed to create keyring.gpg file: %v", err)
 	}
 
 	log.Debugf("Importing public key: gpg --import %s", amazonSSMAgentGPGKey)
-	output, err := l.managerHelper.RunCommand("gpg", "--no-default-keyring", "--keyring", keyringPath, "--import", amazonSSMAgentGPGKey)
+	output, err := l.managerHelper.RunCommand("gpg", "--no-default-keyring", "--keyring", keyringFile, "--import", amazonSSMAgentGPGKey)
 	if err != nil {
 		if l.managerHelper.IsTimeoutError(err) {
 			return fmt.Errorf("gpg command timed out")
@@ -79,17 +82,14 @@ func (l *linuxManager) VerifySignature(log log.T, signaturePath string, artifact
 	log.Infof("Successfully imported keyring: %v", output)
 
 	log.Info("Verifying agent signature")
-	output, err = l.managerHelper.RunCommand("gpg", "--no-default-keyring", "--keyring", keyringPath, "--verify", signaturePath, binaryPath)
+	output, err = l.managerHelper.RunCommand("gpg", "--no-default-keyring", "--keyring", keyringFile, "--verify", signaturePath, binaryPath)
 	if err != nil {
 		if l.managerHelper.IsTimeoutError(err) {
 			return fmt.Errorf("gpg verify: command timed out")
 		}
 		return fmt.Errorf("gpg verify: failed to verify signature using gpg with output '%v' and error: %v", output, err)
 	}
-	goodSignatureText := "Good signature from \"SSM Agent <ssm-agent-signer@amazon.com>\""
-	if !strings.Contains(output, goodSignatureText) {
-		return fmt.Errorf("signature verification failed %v", output)
-	}
+
 	log.Infof("Successfully verified signature")
 	return nil
 }

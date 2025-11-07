@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aws/amazon-ssm-agent/agent/context"
 	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/agent/network"
@@ -34,10 +36,10 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/session/service"
 	"github.com/aws/amazon-ssm-agent/agent/session/telemetry"
 	"github.com/aws/amazon-ssm-agent/agent/ssmconnectionchannel"
+	telemetryV2 "github.com/aws/amazon-ssm-agent/agent/telemetry/exporter/control_channel_exporter"
 	"github.com/aws/amazon-ssm-agent/agent/version"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gorilla/websocket"
-	"github.com/twinj/uuid"
 )
 
 type IControlChannel interface {
@@ -56,6 +58,7 @@ type ControlChannel struct {
 	ChannelId                       string
 	Service                         service.Service
 	AuditLogScheduler               telemetry.IAuditLogTelemetry
+	TelemetryExporter               telemetryV2.ITelemetryExporter
 	channelType                     string
 	agentMessageIncomingMessageChan chan mgsContracts.AgentMessage
 }
@@ -72,6 +75,13 @@ func (controlChannel *ControlChannel) Initialize(context context.T,
 	controlChannel.channelType = mgsConfig.RoleSubscribe
 	controlChannel.wsChannel = &communicator.WebSocketChannel{}
 	controlChannel.AuditLogScheduler = telemetry.GetAuditLogTelemetryInstance(context, controlChannel.wsChannel)
+
+	if !context.AppConfig().Agent.GlobalEnhancedTelemetryEnabled {
+		log.Info("Agent GlobalEnhancedTelemetry is disabled, hence not adding telemetryExporter to control channel")
+	} else {
+		controlChannel.TelemetryExporter = telemetryV2.GetControlChannelTelemetryExporter(context, controlChannel.wsChannel)
+	}
+
 	controlChannel.agentMessageIncomingMessageChan = agentMessageIncomingMessageChan
 	controlChannel.context = context
 	log.Debugf("Initialized controlchannel for instance: %s", instanceId)
@@ -82,8 +92,7 @@ func (controlChannel *ControlChannel) SetWebSocket(context context.T,
 	mgsService service.Service, ableToOpenMGSConnection *uint32) error {
 
 	log := context.Log()
-	uuid.SwitchFormat(uuid.CleanHyphen)
-	uid := uuid.NewV4().String()
+	uid := uuid.New().String()
 
 	log.Infof("Setting up websocket for controlchannel for instance: %s, requestId: %s", controlChannel.ChannelId, uid)
 	tokenValue, err := getControlChannelToken(context, mgsService, controlChannel.ChannelId, uid, ableToOpenMGSConnection)
@@ -97,8 +106,7 @@ func (controlChannel *ControlChannel) SetWebSocket(context context.T,
 	}
 	onErrorHandler := func(err error) {
 		callable := func() (channel interface{}, err error) {
-			uuid.SwitchFormat(uuid.CleanHyphen)
-			requestId := uuid.NewV4().String()
+			requestId := uuid.New().String()
 			tokenValue, err := getControlChannelToken(context, mgsService, controlChannel.ChannelId, requestId, ableToOpenMGSConnection)
 			if err != nil {
 				return controlChannel, err
@@ -190,6 +198,9 @@ func (controlChannel *ControlChannel) Close(log log.T) error {
 	if controlChannel.AuditLogScheduler != nil {
 		controlChannel.AuditLogScheduler.StopScheduler()
 	}
+	if controlChannel.TelemetryExporter != nil {
+		controlChannel.TelemetryExporter.StopExporter()
+	}
 	if controlChannel.wsChannel != nil {
 		return controlChannel.wsChannel.Close(log)
 	}
@@ -212,17 +223,14 @@ func (controlChannel *ControlChannel) Open(context context.T, ableToOpenMGSConne
 		return fmt.Errorf("failed to connect controlchannel with error: %s", err)
 	}
 
-	uuid.SwitchFormat(uuid.CleanHyphen)
-	uid := uuid.NewV4().String()
-
-	instancePlatformType, _ := platform.PlatformType(log)
+	uid := uuid.New().String()
 
 	openControlChannelInput := service.OpenControlChannelInput{
 		MessageSchemaVersion: aws.String(mgsConfig.MessageSchemaVersion),
 		RequestId:            aws.String(uid),
 		TokenValue:           aws.String(controlChannel.wsChannel.GetChannelToken()),
 		AgentVersion:         aws.String(version.Version),
-		PlatformType:         aws.String(instancePlatformType),
+		PlatformType:         aws.String(platform.PlatformType(log)),
 	}
 
 	jsonValue, err := json.Marshal(openControlChannelInput)

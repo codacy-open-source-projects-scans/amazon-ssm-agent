@@ -15,13 +15,16 @@
 package updateutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/amazon-ssm-agent/agent/contracts"
 	"github.com/aws/amazon-ssm-agent/agent/mocks/context"
 	"github.com/aws/amazon-ssm-agent/agent/mocks/log"
 	"github.com/aws/amazon-ssm-agent/common/identity"
@@ -32,9 +35,12 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
 	"github.com/aws/amazon-ssm-agent/agent/fileutil"
 	"github.com/aws/amazon-ssm-agent/agent/updateutil/updateconstants"
+	updateinfomocks "github.com/aws/amazon-ssm-agent/agent/updateutil/updateinfo/mocks"
 	"github.com/aws/amazon-ssm-agent/core/executor"
+	executormocks "github.com/aws/amazon-ssm-agent/core/executor/mocks"
 	"github.com/aws/amazon-ssm-agent/core/workerprovider/longrunningprovider/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 var logger = log.NewMockLog()
@@ -227,7 +233,7 @@ func TestUnInstallerFilePath(t *testing.T) {
 	}
 }
 
-func TestExeCommandSucceeded(t *testing.T) {
+func TestExeCommandStartSucceeded(t *testing.T) {
 	testCases := []struct {
 		cmd            string
 		workingDir     string
@@ -267,14 +273,127 @@ func TestExeCommandSucceeded(t *testing.T) {
 			StdErr:      test.stdErr,
 			IsAsync:     test.isAsync,
 		}
-		_, _, err := util.ExeCommand(&commandInput)
+		_, exitCode, err := util.ExeCommand(&commandInput)
 
 		if test.expectingError {
-			assert.Error(t, err)
+			assert.Equal(t, -1, int(exitCode))
+			assert.ErrorContains(t, err, "exec: not started")
 		} else {
+			assert.Equal(t, -1, int(exitCode))
 			assert.NoError(t, err)
 		}
 	}
+}
+
+func TestExeCommandStartFailed(t *testing.T) {
+	testCases := []struct {
+		cmd        string
+		workingDir string
+		stdOut     string
+		stdErr     string
+		isAsync    bool
+	}{
+		// test system with upstart
+		{"-update -target.version 5.0.0", "temp", "stdout", "stderr", true},
+		// test system with systemD
+		{"-update -target.version 5.0.0", "temp", "stdout", "stderr", false},
+	}
+
+	mkDirAll = func(path string, perm os.FileMode) error {
+		return nil
+	}
+	openFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		return &os.File{}, nil
+	}
+
+	// Stub exec.Command
+	execCommand = fakeExecCommand
+	cmdStart = func(*exec.Cmd) error { return fmt.Errorf("start command error") }
+
+	util := Utility{
+		Context: context.NewMockDefault(),
+	}
+
+	for _, test := range testCases {
+		commandInput := CommandExecutionSettings{
+			Log:         logger,
+			Cmd:         strings.Fields(test.cmd),
+			WorkingDir:  test.workingDir,
+			UpdaterRoot: appconfig.UpdaterArtifactsRoot,
+			StdOut:      test.stdOut,
+			StdErr:      test.stdErr,
+			IsAsync:     test.isAsync,
+		}
+		_, exitCode, err := util.ExeCommand(&commandInput)
+		assert.Equal(t, updateconstants.ExitCodeErrorPrepareUpdateCommand, exitCode)
+		assert.ErrorContains(t, err, "start command error")
+	}
+}
+
+func TestExecCommandWithOutputStartSucceeded(t *testing.T) {
+	mkDirAll = func(path string, perm os.FileMode) error {
+		return nil
+	}
+	openFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		return &os.File{}, nil
+	}
+
+	// Stub exec.Command
+	execCommand = fakeExecCommand
+	cmdStart = func(*exec.Cmd) error { return nil }
+
+	util := Utility{
+		Context: context.NewMockDefault(),
+	}
+
+	commandInput := CommandExecutionSettings{
+		Log:         logger,
+		Cmd:         strings.Fields("-update -target.version 5.0.0"),
+		WorkingDir:  "temp",
+		UpdaterRoot: appconfig.UpdaterArtifactsRoot,
+		StdOut:      "stdout",
+		StdErr:      "stderr",
+		IsAsync:     false,
+	}
+
+	_, exitCode, stdOut, stdErr, err := util.ExecCommandWithOutput(&commandInput)
+	assert.Equal(t, -1, int(exitCode))
+	assert.Empty(t, stdOut)
+	assert.Empty(t, stdErr)
+	assert.ErrorContains(t, err, "exec: not started")
+}
+
+func TestExecCommandWithOutputStartFailed(t *testing.T) {
+	mkDirAll = func(path string, perm os.FileMode) error {
+		return nil
+	}
+	openFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		return &os.File{}, nil
+	}
+
+	// Stub exec.Command
+	execCommand = fakeExecCommand
+	cmdStart = func(*exec.Cmd) error { return fmt.Errorf("start command error") }
+
+	util := Utility{
+		Context: context.NewMockDefault(),
+	}
+
+	commandInput := CommandExecutionSettings{
+		Log:         logger,
+		Cmd:         strings.Fields("-update -target.version 5.0.0"),
+		WorkingDir:  "temp",
+		UpdaterRoot: appconfig.UpdaterArtifactsRoot,
+		StdOut:      "stdout",
+		StdErr:      "stderr",
+		IsAsync:     false,
+	}
+
+	_, exitCode, stdOut, stdErr, err := util.ExecCommandWithOutput(&commandInput)
+	assert.Equal(t, updateconstants.ExitCodeErrorPrepareUpdateCommand, exitCode)
+	assert.Empty(t, stdOut)
+	assert.Empty(t, stdErr)
+	assert.ErrorContains(t, err, "start command error")
 }
 
 func TestKillProcess(t *testing.T) {
@@ -292,7 +411,33 @@ func TestSetExeOutErrCannotCreateFolder(t *testing.T) {
 		return fmt.Errorf("create folder error")
 	}
 	_, _, err := setExeOutErr(appconfig.UpdaterArtifactsRoot, "std", "err")
-	assert.Error(t, err, "create folder error")
+	assert.ErrorContains(t, err, "create folder error")
+
+	// Stub exec.Command
+	execCommand = fakeExecCommand
+
+	util := Utility{
+		Context: context.NewMockDefault(),
+	}
+
+	commandInput := CommandExecutionSettings{
+		Log:         logger,
+		Cmd:         strings.Fields("-update -target.version 5.0.0"),
+		WorkingDir:  "temp",
+		UpdaterRoot: appconfig.UpdaterArtifactsRoot,
+		StdOut:      "stdout",
+		StdErr:      "stderr",
+		IsAsync:     false,
+	}
+	_, exitCode, err := util.ExeCommand(&commandInput)
+	assert.Equal(t, updateconstants.ExitCodeErrorPrepareUpdateCommand, exitCode)
+	assert.ErrorContains(t, err, "create folder error")
+
+	_, exitCode, stdOut, stdErr, err := util.ExecCommandWithOutput(&commandInput)
+	assert.Equal(t, updateconstants.ExitCodeErrorPrepareUpdateCommand, exitCode)
+	assert.Nil(t, stdOut)
+	assert.Nil(t, stdErr)
+	assert.ErrorContains(t, err, "create folder error")
 }
 
 func TestSetExeOutErrCannotOpenFile(t *testing.T) {
@@ -304,7 +449,34 @@ func TestSetExeOutErrCannotOpenFile(t *testing.T) {
 		return &os.File{}, fmt.Errorf("create file error")
 	}
 	_, _, err := setExeOutErr(appconfig.UpdaterArtifactsRoot, "std", "err")
-	assert.Error(t, err, "create file error")
+	assert.ErrorContains(t, err, "create file error")
+
+	// Stub exec.Command
+	execCommand = fakeExecCommand
+
+	util := Utility{
+		Context: context.NewMockDefault(),
+	}
+
+	commandInput := CommandExecutionSettings{
+		Log:         logger,
+		Cmd:         strings.Fields("-update -target.version 5.0.0"),
+		WorkingDir:  "temp",
+		UpdaterRoot: appconfig.UpdaterArtifactsRoot,
+		StdOut:      "stdout",
+		StdErr:      "stderr",
+		IsAsync:     false,
+	}
+	_, exitCode, err := util.ExeCommand(&commandInput)
+	fmt.Println(err)
+	assert.Equal(t, updateconstants.ExitCodeErrorPrepareUpdateCommand, exitCode)
+	assert.ErrorContains(t, err, "create file error")
+
+	_, exitCode, stdOut, stdErr, err := util.ExecCommandWithOutput(&commandInput)
+	assert.Equal(t, updateconstants.ExitCodeErrorPrepareUpdateCommand, exitCode)
+	assert.Nil(t, stdOut)
+	assert.Nil(t, stdErr)
+	assert.ErrorContains(t, err, "create file error")
 }
 
 func fakeExecCommand(command string, args ...string) *exec.Cmd {
@@ -625,4 +797,188 @@ func (p *testProcess) Processes() ([]executor.OsProcess, error) {
 	}
 	allProcess = append(allProcess, process)
 	return allProcess, nil
+}
+
+func TestNewUpdaterUtilWithLoadedDocContent(t *testing.T) {
+	testCases := []struct {
+		name               string
+		mockLoadDocState   bool
+		expectedLogWarning bool
+	}{
+		{
+			name:               "Successful Document State Loading",
+			mockLoadDocState:   true,
+			expectedLogWarning: false,
+		},
+		{
+			name:               "Failed Document State Loading",
+			mockLoadDocState:   false,
+			expectedLogWarning: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create mock context
+			mockCtx := context.NewMockDefault()
+
+			// Prepare mock LoadUpdateDocumentState behavior
+			if tc.mockLoadDocState {
+				mockCtx.On("LoadUpdateDocumentState", mock.Anything, mock.Anything).Return(nil)
+			} else {
+				mockCtx.On("LoadUpdateDocumentState", mock.Anything, mock.Anything).Return(fmt.Errorf("load error"))
+			}
+
+			// Call the function
+			updaterUtil := NewUpdaterUtilWithLoadedDocContent(mockCtx, "testCommandID")
+
+			// Assertions
+			assert.NotNil(t, updaterUtil, "Updater utility should not be nil")
+			assert.Equal(t, mockCtx, updaterUtil.Context, "Context should be set correctly")
+		})
+	}
+}
+
+func TestNewUpdaterUtilWithLoadedDocContent_EmptyCommandID(t *testing.T) {
+	// Create mock context
+	mockCtx := context.NewMockDefault()
+	mockLog := log.NewMockLog()
+
+	// Setup mock context
+	mockCtx.On("Log").Return(mockLog)
+	mockCtx.On("LoadUpdateDocumentState", mock.Anything, "").Return(nil)
+	mockLog.On("Warnf", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	// Call the function with empty command ID
+	updaterUtil := NewUpdaterUtilWithLoadedDocContent(mockCtx, "")
+
+	// Assertions
+	assert.NotNil(t, updaterUtil, "Updater utility should not be nil")
+}
+
+func TestGetExecutionTimeOut(t *testing.T) {
+	timeout := 100
+	updatedTimeOut := 200
+	utility := &Utility{
+		CustomUpdateExecutionTimeoutInSeconds: timeout,
+	}
+	assert.Equal(t, timeout, utility.GetExecutionTimeOut())
+	utility.UpdateExecutionTimeOut(updatedTimeOut)
+	assert.Equal(t, updatedTimeOut, utility.GetExecutionTimeOut())
+}
+
+func TestExecCommandOutput(t *testing.T) {
+	mockCtx := context.NewMockDefault()
+	docState := contracts.DocumentState{}
+	utility := &Utility{
+		Context:                               mockCtx,
+		CustomUpdateExecutionTimeoutInSeconds: 10,
+		ProcessExecutor:                       &executormocks.IExecutor{},
+		UpdateDocState:                        docState,
+	}
+	paramArray := []string{"foo"}
+	_, err := utility.ExeCommandOutput(log.NewMockLog(), "ls", paramArray, "fooWorkDir", "fooOutRoot", "fooOutFileName", "fooErrorFileName", false)
+	assert.NotNil(t, err)
+	assert.EqualError(t, err, "create file error")
+}
+
+func TestNewExecCommandOutput(t *testing.T) {
+	mockCtx := context.NewMockDefault()
+	docState := contracts.DocumentState{}
+	utility := &Utility{
+		Context:                               mockCtx,
+		CustomUpdateExecutionTimeoutInSeconds: 10,
+		ProcessExecutor:                       &executormocks.IExecutor{},
+		UpdateDocState:                        docState,
+	}
+	paramArray := []string{"foo"}
+	file, err := os.Create("person.txt")
+	_, err = utility.NewExeCommandOutput(log.NewMockLog(), "ls", paramArray, "fooWorkDir", "fooOutRoot", file, file, false)
+	assert.NotNil(t, err)
+	if runtime.GOOS == "windows" {
+		assert.EqualError(t, err, "chdir fooWorkDir: The system cannot find the file specified.")
+	} else {
+		assert.EqualError(t, err, "chdir fooWorkDir: no such file or directory")
+	}
+}
+
+// TestResolveAgentReleaseBucketURL tests the URL resolution for agent release buckets
+func TestResolveAgentReleaseBucketURL(t *testing.T) {
+	testCases := []struct {
+		name        string
+		region      string
+		expectedURL string
+	}{
+		{
+			name:        "Valid US East Region",
+			region:      "us-east-1",
+			expectedURL: "https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/",
+		},
+		{
+			name:        "Valid US West Region",
+			region:      "us-west-2",
+			expectedURL: "https://s3.us-west-2.amazonaws.com/amazon-ssm-us-west-2/",
+		},
+		{
+			name:        "China Region",
+			region:      "cn-north-1",
+			expectedURL: "https://s3.cn-north-1.amazonaws.com.cn/amazon-ssm-cn-north-1/",
+		},
+		{
+			name:        "unavailable Region",
+			region:      "ap-northeast-3",
+			expectedURL: "https://s3.ap-northeast-3.amazonaws.com/amazon-ssm-ap-northeast-3/",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			agentIdentityMock := &identityMocks.IAgentIdentity{}
+			agentIdentityMock.On("Region").Return(tc.region, nil)
+			if tc.name == "China Region" || tc.name == "unavailable Region" {
+				agentIdentityMock.On("GetServiceEndpoint", "s3").Return("")
+			} else {
+				agentIdentityMock.On("GetServiceEndpoint", "s3").Return(fmt.Sprintf("s3.%v.amazonaws.com", tc.region))
+			}
+			actualURL := ResolveAgentReleaseBucketURL(tc.region, agentIdentityMock)
+			assert.Equal(t, tc.expectedURL, actualURL, "Resolved URL does not match expected")
+		})
+	}
+}
+
+func TestIsWorkerRunning(t *testing.T) {
+	mockCtx := context.NewMockDefault()
+	docState := contracts.DocumentState{}
+	utility := &Utility{
+		Context:                               mockCtx,
+		CustomUpdateExecutionTimeoutInSeconds: 10,
+		ProcessExecutor:                       nil,
+		UpdateDocState:                        docState,
+	}
+	result, err := utility.IsWorkerRunning(logger)
+	assert.Nil(t, err)
+
+	mockedExecutor := &executormocks.IExecutor{}
+	mockedExecutor.On("Processes").Return(nil, errors.New("mocked process error"))
+	utility.ProcessExecutor = mockedExecutor
+	result, err = utility.IsWorkerRunning(logger)
+	assert.Equal(t, false, result)
+	assert.NotNil(t, err)
+	assert.EqualError(t, err, "mocked process error")
+}
+
+func TestWaitForServiceToStart(t *testing.T) {
+	mockCtx := context.NewMockDefault()
+	docState := contracts.DocumentState{}
+	utility := &Utility{
+		Context:                               mockCtx,
+		CustomUpdateExecutionTimeoutInSeconds: 10,
+		ProcessExecutor:                       nil,
+		UpdateDocState:                        docState,
+	}
+	updateInfoMock := &updateinfomocks.T{}
+	updateInfoMock.On("IsPlatformDarwin").Return(false)
+	updateInfoMock.On("IsPlatformUsingSystemD").Return(true, nil)
+	execCommand = fakeExecCommand
+	utility.WaitForServiceToStart(logger, updateInfoMock, "0.0")
 }

@@ -60,9 +60,9 @@ const (
 	NoProxy = " --no-proxy "
 	// Default folder name for domain join plugin
 	DomainJoinFolderName = "awsDomainJoin"
-	// SetHostName is an optional argument to set hostname name after domain join
+	// KeepHostName is an optional flag to retain instance hostnames as assigned
 	KeepHostNameArgs = " --keep-hostname "
-	// KeepHostName is a flag to retain instance hostnames as assigned (by customers).
+	// SetHostName is an optional argument to set hostname name after domain join
 	SetHostNameArg = " --set-hostname "
 	// SetHostNameNumAppendDigits is an optional argument to set hostname name after domain join
 	SetHostNameNumAppendDigitsArg = " --set-hostname-append-num-digits "
@@ -88,7 +88,7 @@ type DomainJoinPluginInput struct {
 	DnsIpAddresses          []string
 	HostName                string
 	HostNameNumAppendDigits string
-	KeepHostName            bool
+	KeepHostName            interface{}
 }
 
 // NewPlugin returns a new instance of the plugin.
@@ -250,7 +250,7 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 	}
 
 	if isShellInjection(pluginInput.DirectoryId) {
-		return "", fmt.Errorf("Shell command injection string " + pluginInput.DirectoryId)
+		return "", fmt.Errorf("Shell command injection string %s", pluginInput.DirectoryId)
 	}
 
 	buffer.WriteString(DirectoryIdArg)
@@ -261,7 +261,7 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 	}
 
 	if isShellInjection(pluginInput.DirectoryName) {
-		return "", fmt.Errorf("Shell command injection string " + pluginInput.DirectoryName)
+		return "", fmt.Errorf("Shell command injection string %s", pluginInput.DirectoryName)
 	}
 	buffer.WriteString(DirectoryNameArg)
 	buffer.WriteString(pluginInput.DirectoryName)
@@ -275,7 +275,7 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 	}
 
 	if isShellInjection(region) {
-		return "", fmt.Errorf("Shell command injection string " + region)
+		return "", fmt.Errorf("Shell command injection string %s", region)
 	}
 
 	// check if user provides the directory OU parameter
@@ -291,12 +291,12 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 	}
 
 	if isShellInjection(pluginInput.DirectoryOU) {
-		return "", fmt.Errorf("Shell command injection string " + pluginInput.DirectoryName)
+		return "", fmt.Errorf("Shell command injection string %s", pluginInput.DirectoryOU)
 	}
 
 	if len(pluginInput.HostName) != 0 {
 		if isShellInjection(pluginInput.HostName) {
-			return "", fmt.Errorf("Shell command injection string " + pluginInput.DirectoryName)
+			return "", fmt.Errorf("Shell command injection string %s", pluginInput.HostName)
 		}
 		buffer.WriteString(SetHostNameArg)
 		buffer.WriteString(pluginInput.HostName)
@@ -304,7 +304,7 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 		if len(pluginInput.HostNameNumAppendDigits) != 0 {
 			val, err := strconv.Atoi(pluginInput.HostNameNumAppendDigits)
 			if err != nil {
-				return "", fmt.Errorf("HostNameNumAppendDigits %s has non-digits " + pluginInput.HostNameNumAppendDigits)
+				return "", fmt.Errorf("HostNameNumAppendDigits %s has non-digits content. err: %v", pluginInput.HostNameNumAppendDigits, err)
 			} else {
 				log.Debugf("HostNameNumAppendDigits parameter is : %d", val)
 			}
@@ -313,9 +313,28 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 		}
 	}
 
-	if pluginInput.KeepHostName {
-		buffer.WriteString(KeepHostNameArgs)
-		buffer.WriteString(" ")
+	if pluginInput.KeepHostName != nil {
+		var keepHostName bool
+
+		switch val := pluginInput.KeepHostName.(type) {
+		case bool:
+			keepHostName = val
+		case string:
+			keepHostName, err = strconv.ParseBool(val)
+			if err != nil {
+				return "", fmt.Errorf("KeepHostName %s has non-boolean content. err: %v", pluginInput.KeepHostName, err)
+			}
+		default:
+			return "", fmt.Errorf("KeepHostName has invalid type %T", pluginInput.KeepHostName)
+		}
+
+		log.Debugf("KeepHostName parameter is : %v", keepHostName)
+		if keepHostName {
+			buffer.WriteString(KeepHostNameArgs)
+			buffer.WriteString(" ")
+		}
+	} else {
+		log.Debugf("KeepHostName parameter is not specified, default to false")
 	}
 
 	if len(pluginInput.DnsIpAddresses) == 0 {
@@ -330,13 +349,13 @@ func makeArguments(context context.T, scriptPath string, pluginInput DomainJoinP
 			buffer.WriteString(",")
 		}
 		if isShellInjection(pluginInput.DnsIpAddresses[index]) {
-			return "", fmt.Errorf("Shell command injection string " + pluginInput.DnsIpAddresses[index])
+			return "", fmt.Errorf("Shell command injection string %s", pluginInput.DnsIpAddresses[index])
 		}
 		matchesIPPat := isMatchingIPAddress(pluginInput.DnsIpAddresses[index])
 		if matchesIPPat {
 			buffer.WriteString(pluginInput.DnsIpAddresses[index])
 		} else {
-			return "", fmt.Errorf("Invalid DNS IP address " + pluginInput.DnsIpAddresses[index])
+			return "", fmt.Errorf("Invalid DNS IP address %s", pluginInput.DnsIpAddresses[index])
 		}
 	}
 

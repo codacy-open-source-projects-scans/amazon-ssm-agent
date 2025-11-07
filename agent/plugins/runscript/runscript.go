@@ -81,7 +81,7 @@ func (p *Plugin) Execute(config contracts.Configuration, cancelFlag task.CancelF
 	} else if cancelFlag.Canceled() {
 		output.MarkAsCancelled()
 	} else {
-		p.runCommandsRawInput(config.PluginID, config.Properties, config.OrchestrationDirectory, config.DefaultWorkingDirectory, cancelFlag, output, runCommandID)
+		p.runCommandsRawInput(config.PluginID, config.Properties, config.OrchestrationDirectory, config.DefaultWorkingDirectory, cancelFlag, output, runCommandID, config.EnvironmentVariables)
 	}
 }
 
@@ -122,9 +122,15 @@ func (p *Plugin) setCommandIdEnvironment(pluginInput RunScriptPluginInput, runCo
 	}
 }
 
+func (p *Plugin) setPluginCommandEnvironment(pluginInput RunScriptPluginInput, PluginEnvironmentVariables map[string]string) {
+	for k, v := range PluginEnvironmentVariables {
+		pluginInput.Environment[k] = v
+	}
+}
+
 // runCommandsRawInput executes one set of commands and returns their output.
 // The input is in the default json unmarshal format (e.g. map[string]interface{}).
-func (p *Plugin) runCommandsRawInput(pluginID string, rawPluginInput interface{}, orchestrationDirectory string, defaultWorkingDirectory string, cancelFlag task.CancelFlag, output iohandler.IOHandler, runCommandID string) {
+func (p *Plugin) runCommandsRawInput(pluginID string, rawPluginInput interface{}, orchestrationDirectory string, defaultWorkingDirectory string, cancelFlag task.CancelFlag, output iohandler.IOHandler, runCommandID string, PluginEnvironmentVariables map[string]string) {
 	var pluginInput RunScriptPluginInput
 	err := jsonutil.Remarshal(rawPluginInput, &pluginInput)
 	if err != nil {
@@ -137,6 +143,7 @@ func (p *Plugin) runCommandsRawInput(pluginID string, rawPluginInput interface{}
 		pluginInput.Environment = make(map[string]string)
 	}
 
+	p.setPluginCommandEnvironment(pluginInput, PluginEnvironmentVariables)
 	p.setCommandIdEnvironment(pluginInput, runCommandID)
 	p.setShareCredsEnvironment(pluginInput)
 
@@ -148,10 +155,6 @@ func (p *Plugin) runCommands(pluginID string, pluginInput RunScriptPluginInput, 
 	log := p.Context.Log()
 	var err error
 	var workingDir string
-
-	if !pluginutil.ValidatePluginId(pluginInput.ID) {
-		pluginInput.ID = ""
-	}
 
 	if filepath.IsAbs(pluginInput.WorkingDirectory) {
 		workingDir = pluginInput.WorkingDirectory
@@ -165,7 +168,7 @@ func (p *Plugin) runCommands(pluginID string, pluginInput RunScriptPluginInput, 
 	}
 
 	// TODO:MF: This subdirectory is only needed because we could be running multiple sets of properties for the same plugin - otherwise the orchestration directory would already be unique
-	orchestrationDir := fileutil.BuildPath(orchestrationDirectory, pluginInput.ID)
+	orchestrationDir := fileutil.BuildSafePath(orchestrationDirectory, pluginInput.ID)
 	log.Debugf("Running commands %v with environment variables %v in workingDirectory %v; orchestrationDir %v ", pluginInput.RunCommand, pluginInput.Environment, workingDir, orchestrationDir)
 
 	// create orchestration dir if needed

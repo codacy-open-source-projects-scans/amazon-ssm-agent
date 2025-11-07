@@ -17,85 +17,44 @@
 package testcases
 
 import (
-	"context"
 	"fmt"
-	"os/exec"
-	"strings"
-	"time"
 
-	"github.com/aws/amazon-ssm-agent/agent/appconfig"
-	testCommon "github.com/aws/amazon-ssm-agent/agent/update/tester/common"
+	"github.com/aws/amazon-ssm-agent/agent/log"
+	"github.com/aws/amazon-ssm-agent/agent/platform"
 )
 
-const (
-	ec2DetectorTestCaseName = "WinEc2Detector"
+const ec2DetectorTestCaseName = "WinEc2Detector"
 
-	commandExecTimeout = 3 * time.Second
-	commandMaxRetry    = 3
-	biosInfoCmd        = "Get-CimInstance -ClassName Win32_BIOS"
-
-	uuidKey    = "SerialNumber"
-	vendorKey  = "Manufacturer"
-	versionKey = "SMBIOSBIOSVersion"
-)
-
-var execCommand = func(cmd string, params ...string) (string, error) {
-	var err error
-	var byteOutput []byte
-
-	ctx, cancel := context.WithTimeout(context.Background(), commandExecTimeout)
-	defer cancel()
-	for i := 0; i < commandMaxRetry; i++ {
-		byteOutput, err = exec.CommandContext(ctx, cmd, params...).Output()
-		if err == nil {
-			return strings.TrimSpace(string(byteOutput)), nil
-		}
+func getSystemHostInfo(log log.T) (HostInfo, error) {
+	info := HostInfo{}
+	if version, err := platform.GetSystemInfo(log, platform.BiosVersionParamKey); err == nil {
+		info.Version = cleanBiosString(version)
+	} else {
+		return info, fmt.Errorf("%s: %v", failedQuerySystemHostInfo, err)
 	}
-
-	return "", err
-}
-
-func getSystemHostInfo() (HostInfo, error) {
-	var info HostInfo
-	args := append(strings.Split(appconfig.PowerShellCommandArgs, " "), biosInfoCmd)
-	output, err := execCommand(appconfig.PowerShellPluginCommandName, args...)
-	if err != nil {
+	if uuid, err := platform.GetSystemInfo(log, platform.BiosSerialNumberParamKey); err == nil {
+		info.Uuid = cleanBiosString(uuid)
+	} else {
+		return info, fmt.Errorf("%s: %v", failedQuerySystemHostInfo, err)
+	}
+	if vendor, err := platform.GetSystemInfo(log, platform.BiosManufacturerParamKey); err == nil {
+		info.Vendor = cleanBiosString(vendor)
+	} else {
 		return info, fmt.Errorf("%s: %v", failedQuerySystemHostInfo, err)
 	}
 
-	for _, biosLine := range strings.Split(output, "\r\n") {
-		splitLine := strings.SplitN(biosLine, ":", 2)
-		if len(splitLine) != 2 {
-			continue
-		}
-
-		value := cleanBiosString(splitLine[1])
-		switch strings.TrimSpace(splitLine[0]) {
-		case uuidKey:
-			info.Uuid = value
-		case vendorKey:
-			info.Vendor = value
-		case versionKey:
-			info.Version = value
-		}
-	}
-
 	if info.Version == "" && info.Vendor == "" {
-		return info, fmt.Errorf(failedToGetVendorAndVersion)
+		return info, fmt.Errorf("%s", failedToGetVendorAndVersion)
 	}
 
 	if info.Uuid == "" {
-		return info, fmt.Errorf(failedToGetUuid)
+		return info, fmt.Errorf("%s", failedToGetUuid)
 	}
 
 	return info, nil
 }
 
 func (l *Ec2DetectorTestCase) queryHostInfo() {
-	l.smbiosHostInfo, l.smbiosErr = getSmbiosHostInfo(l.context.Log())
-	l.systemHostInfo, l.systemErr = getSystemHostInfo()
-}
-
-func (l *Ec2DetectorTestCase) generatePlatformTestResult() (testCommon.TestResult, string) {
-	return l.generateTestResult(l.smbiosHostInfo, l.smbiosErr, l.systemHostInfo, l.systemErr)
+	l.primaryInfo, l.primaryErr = getSmbiosHostInfo(l.context.Log())
+	l.secondaryInfo, l.secondaryErr = getSystemHostInfo(l.context.Log())
 }

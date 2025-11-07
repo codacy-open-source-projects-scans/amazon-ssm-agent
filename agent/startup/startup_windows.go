@@ -25,7 +25,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
 	"github.com/aws/amazon-ssm-agent/agent/log"
@@ -39,12 +38,6 @@ import (
 )
 
 const (
-	// Retry max count for opening serial port
-	serialPortRetryMaxCount = 2
-
-	// Wait time before retrying to open serial port
-	serialPortRetryWaitTime = 1
-
 	// OS installation options
 	fullServer = "Full"
 	nanoServer = "Nano"
@@ -66,15 +59,6 @@ const (
 	NitroEnclavesName            = "Name"
 	NitroEnclavesVersionProperty = "Version"
 
-	// PnpEntity Properties
-	deviceIDProperty = "DeviceID"
-	serviceProperty  = "Service"
-	nameProperty     = "Name"
-
-	// PnpSignedDriver Properties
-	descriptionProperty   = "Description"
-	driverVersionProperty = "DriverVersion"
-
 	// WindowsDriver Properties
 	originalFileNameProperty = "OriginalFileName"
 	versionProperty          = "Version"
@@ -91,27 +75,11 @@ const (
 	// PS command to look up Windows information
 	getWindowsInfoCmd = "Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'"
 
-	// PS command to get OS information
-	getOSInfoCmd = "Get-CimInstance Win32_OperatingSystem"
-
 	// PS command to get AWS PV package entry from registry HKLM:\SOFTWARE\Amazon\PVDriver
 	getPvPackageVersionCmd = "Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Amazon\\PVDriver'"
 
 	// PS command to get AWS Nitro Enclaves package entry from registry HKLM:\SOFTWARE\Amazon\AwsNitroEnclaves
 	getNitroEnclavesPackageVersionCmd = "Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Amazon\\AwsNitroEnclaves'"
-
-	// PS command to get AWS PV Storage Host Adapter entry shown in Device Manager
-	getPvDriverPnpEntityCmd = "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Service -eq 'xenvbd' }"
-
-	// PS command to get all AWS signed drivers
-	getPnpSignedDriversCmd = "Get-CimInstance Win32_PnPSignedDriver | Where-Object { " +
-		"$_.DeviceID -eq '%v' -or " +
-		"$_.DeviceClass -eq 'Net' -and ( " +
-		"$_.Manufacturer -like 'Intel*' -or " +
-		"$_.Manufacturer -eq 'Citrix Systems, Inc.' -or " +
-		"$_.Manufacturer -eq 'Amazon Inc.' -or " +
-		"$_.Manufacturer -eq 'Amazon Web Services, Inc.' )" +
-		"}"
 
 	// PS command to get all AWS drivers from Windows driver list.
 	getWindowsDriversCmd = "Get-WindowsDriver -Online | Where-Object { " +
@@ -123,15 +91,6 @@ const (
 		"$_.ProviderName -eq 'Amazon Web Services, Inc.' ) " +
 		"}"
 
-	// PS command to get all AWS driver entries shown in Device Manager
-	getAllPnpEntitiesCmd = "Get-CimInstance Win32_PnPEntity | Where-Object { " +
-		"$_.Service -eq 'xenvbd' -or " +
-		"$_.Manufacturer -like 'Intel*' -or " +
-		"$_.Manufacturer -eq 'Citrix Systems, Inc.' -or " +
-		"$_.Manufacturer -eq 'Amazon Inc.' -or " +
-		"$_.Manufacturer -eq 'Amazon Web Services, Inc.' " +
-		"}"
-
 	// PS command to get all event logs for System
 	getEventLogsCmd = "Get-WinEvent -FilterHashtable @( " +
 		"@{ " + logNameProperty + "='System'; " + providerNameProperty + "='Microsoft-Windows-Kernel-General'; " +
@@ -140,7 +99,13 @@ const (
 		idProperty + "=1001; " + levelProperty + "=2 } " +
 		") | Sort-Object " + timeCreatedProperty + " -Descending"
 
-	defaultComPort = "\\\\.\\COM1"
+	// WMI filter to get all AWS driver entries shown in Device Manager
+	getAllPnpEntitiesWhereClause = "Where Service='xenvbd' Or Manufacturer Like 'Intel%' Or Manufacturer='Citrix Systems, Inc.' " +
+		"Or Manufacturer='Amazon Inc.' Or Manufacturer='Amazon Web Services, Inc.'"
+
+	// WMI filter to get all AWS signed drivers
+	getPnpSignedDriversWhereClause = "Where DeviceID='%v' Or DeviceClass='Net' And (Manufacturer Like 'Intel%%' " +
+		"Or Manufacturer='Citrix Systems, Inc.' Or Manufacturer='Amazon Inc.' Or Manufacturer='Amazon Web Services, Inc.')"
 )
 
 // IsAllowed returns true if the current platform/instance allows startup processor.
@@ -186,11 +151,6 @@ func (p *Processor) IsAllowed() bool {
 	return true
 }
 
-func discoverPort(log log.T, windowsInfo model.WindowsInfo) (port string, err error) {
-	// TODO: Discover correct port to use.
-	return defaultComPort, nil
-}
-
 // ExecuteTasks opens serial port, write agent verion, AWS driver info and bugchecks in console log.
 func (p *Processor) ExecuteTasks() (err error) {
 	defer func() {
@@ -199,8 +159,6 @@ func (p *Processor) ExecuteTasks() (err error) {
 			p.context.Log().Errorf("Stacktrace:\n%s", debug.Stack())
 		}
 	}()
-	var sp *serialport.SerialPort
-
 	var driverInfo []model.DriverInfo
 	var bugChecks []string
 
@@ -208,42 +166,17 @@ func (p *Processor) ExecuteTasks() (err error) {
 
 	log.Info("Executing startup processor tasks")
 
-	windowsInfo, osInfo, windowsInfoError := getSystemInfo(log)
+	windowsInfo, windowsInfoError := getWindowsInfo(log)
 
-	port := defaultComPort
-	if windowsInfoError == nil {
-		if port, err = discoverPort(log, windowsInfo); err != nil || port == "" {
-			log.Infof("Could not discover port, %v. Setting to default port: %s", err, defaultComPort)
-			port = defaultComPort
-		}
-	}
-	log.Infof("Opening serial port: %s", port)
-
-	// attempt to initialize and open the serial port.
-	// since only three minute is allowed to write logs to console during boot,
-	// it attempts to open serial port for approximately three minutes.
-	retryCount := 0
-	for retryCount < serialPortRetryMaxCount {
-		sp = serialport.NewSerialPort(log, port)
-		if err = sp.OpenPort(); err != nil {
-			log.Errorf("%v. Retrying in %v seconds...", err.Error(), serialPortRetryWaitTime)
-			time.Sleep(serialPortRetryWaitTime * time.Second)
-			retryCount++
-		} else {
-			break
-		}
-
-		// if the retry count hits the maximum count, log the error and return.
-		if retryCount == serialPortRetryMaxCount {
-			err = errors.New("Timeout: Serial port is in use or not available")
-			log.Errorf("Error occurred while opening serial port: %v", err.Error())
-			return
-		}
+	sp, err := serialport.NewSerialPortWithRetry(log)
+	if err != nil {
+		log.Errorf("Error occurred while opening serial port: %v", err.Error())
+		return
 	}
 
 	// defer is set to close the serial port during unexpected.
 	defer func() {
-		//serial port MUST be closed.
+		// serial port MUST be closed.
 		sp.ClosePort()
 	}()
 
@@ -252,8 +185,8 @@ func (p *Processor) ExecuteTasks() (err error) {
 
 	if windowsInfoError == nil {
 		sp.WritePort(fmt.Sprintf("OsProductName: %v", windowsInfo.ProductName))
-		sp.WritePort(fmt.Sprintf("OsInstallOption: %v", getInstallationOptionBySKU(osInfo.OperatingSystemSKU)))
-		sp.WritePort(fmt.Sprintf("OsVersion: %v", osInfo.Version))
+		sp.WritePort(fmt.Sprintf("OsInstallOption: %v", getInstallationOptionBySKU(log)))
+		sp.WritePort(fmt.Sprintf("OsVersion: %v", getOsVersion(log, windowsInfo.CurrentMajorVersionNumber, windowsInfo.CurrentMinorVersionNumber)))
 		sp.WritePort(fmt.Sprintf("OsBuildLabEx: %v", windowsInfo.BuildLabEx))
 	}
 
@@ -286,33 +219,31 @@ func (p *Processor) ExecuteTasks() (err error) {
 	return
 }
 
-// getSystemInfo queries Windows information from registry key and OS information from Win32_OperatingSystem.
-func getSystemInfo(log log.T) (windowsInfo model.WindowsInfo, osInfo model.OperatingSystemInfo, err error) {
-	// this queries Windows info.
+// getWindowsInfo queries Windows information from registry key
+func getWindowsInfo(log log.T) (windowsInfo model.WindowsInfo, err error) {
 	properties := []string{productNameProperty, buildLabExProperty, currentMajorVersionNumber, currentMinorVersionNumber}
 	if err = runPowershell(&windowsInfo, getWindowsInfoCmd, properties, false); err != nil {
 		log.Infof("Error occurred while querying Windows info: %v", err.Error())
 	}
+	return
+}
 
-	// this queries OS info.
-	properties = []string{osVersionProperty, operatingSystemSkuProperty}
-	if err = runPowershell(&osInfo, getOSInfoCmd, properties, false); err != nil {
-		log.Infof("Error occurred while querying OS info: %v", err.Error())
-	}
-
+func getOsVersion(log log.T, majorVersionNumber int, minorVersionNumber int) string {
 	// ec2 console output must show only major and minor versions.
-	if windowsInfo.CurrentMajorVersionNumber == 0 {
-		versionSplit := strings.Split(osInfo.Version, ".")
-		if len(versionSplit) > 1 {
-			osInfo.Version = fmt.Sprintf("%v.%v", versionSplit[0], versionSplit[1])
-		} else if len(versionSplit) == 1 {
-			osInfo.Version = fmt.Sprintf("%v.0", versionSplit[0])
+	if majorVersionNumber == 0 {
+		if platformVersion, err := platform.PlatformVersion(log); err == nil {
+			versionSplit := strings.Split(platformVersion, ".")
+			if len(versionSplit) > 1 {
+				return fmt.Sprintf("%v.%v", versionSplit[0], versionSplit[1])
+			} else if len(versionSplit) == 1 {
+				return fmt.Sprintf("%v.0", versionSplit[0])
+			}
 		}
 	} else {
-		osInfo.Version = fmt.Sprintf("%v.%v", windowsInfo.CurrentMajorVersionNumber, windowsInfo.CurrentMinorVersionNumber)
+		return fmt.Sprintf("%v.%v", majorVersionNumber, minorVersionNumber)
 	}
 
-	return
+	return ""
 }
 
 // getAWSPvPackage queries PvDriver information from registry key.
@@ -331,7 +262,6 @@ func getAWSPvPackageInfo(log log.T) (pvPackageInfo model.PvPackageInfo, err erro
 			return
 		}
 	} else if isNano {
-
 		// Create a new error to detect nano servers
 		err = errors.New("is a nano server")
 	}
@@ -341,7 +271,6 @@ func getAWSPvPackageInfo(log log.T) (pvPackageInfo model.PvPackageInfo, err erro
 
 // getAWSNitroEnclavesPackage queries AwsNitroEnclaves information from registry key.
 func getAWSNitroEnclavesPackageInfo(log log.T) (NitroEnclavesPackageInfo model.NitroEnclavesPackageInfo, err error) {
-
 	// this queries the registry for AWS Nitro Enclaves Package version
 	properties := []string{NitroEnclavesName, NitroEnclavesVersionProperty}
 	if err = runPowershell(&NitroEnclavesPackageInfo, getNitroEnclavesPackageVersionCmd, properties, false); err != nil {
@@ -363,29 +292,26 @@ func getAWSDriverInfo(log log.T) (driverInfo []model.DriverInfo, err error) {
 	return
 }
 
-// getAWSDriverInfoForFull runs powershell using Win32_PnPEntity and Win32_PnPSignedDriver
-// and collects and returns driver information.
+// getAWSDriverInfoForFull collects and returns driver information using Win32_PnPEntity and Win32_PnPSignedDriver.
 func getAWSDriverInfoForFull(log log.T) (driverInfo []model.DriverInfo, err error) {
-	var pnpSignedDrivers []model.PnpSignedDriver
-	var pnpEntities []model.PnpEntity
-	var deviceID string
-
-	// this queries xenvbd (AWS PV Storage Host Adapter) to get its DeviceId.
-	properties := []string{deviceIDProperty}
-	if err = runPowershell(&pnpEntities, getPvDriverPnpEntityCmd, properties, true); err != nil {
+	// query xenvbd (AWS PV Storage Host Adapter) to get its DeviceId.
+	var pnpEntities []platform.Win32_PnPEntity
+	if pnpEntities, err = platform.GetWMIData[platform.Win32_PnPEntity]("Where Service='xenvbd'"); err != nil {
 		log.Infof("Error occurred while querying DeviceID for AWS PV Storage Host Adapter: %v", err.Error())
 		return
 	}
 
-	// get the DeviceID if the previous query had a result.
-	if len(pnpEntities) != 0 {
+	var deviceID string
+	if len(pnpEntities) > 0 {
 		deviceID = pnpEntities[0].DeviceID
+	} else {
+		log.Infof("No data found for DeviceID for AWS PV Storage Host Adapter")
+		return
 	}
 
-	// this queries signed AWS drivers to get proper Name and Version.
-	command := fmt.Sprintf(getPnpSignedDriversCmd, deviceID)
-	properties = []string{descriptionProperty, driverVersionProperty}
-	if err = runPowershell(&pnpSignedDrivers, command, properties, true); err != nil {
+	// query signed AWS drivers to get proper Name and Version.
+	var pnpSignedDrivers []platform.Win32_PnPSignedDriver
+	if pnpSignedDrivers, err = platform.GetWMIData[platform.Win32_PnPSignedDriver](fmt.Sprintf(getPnpSignedDriversWhereClause, deviceID)); err != nil {
 		log.Infof("Error occurred while querying signed AWS drivers: %v", err.Error())
 		return
 	}
@@ -401,11 +327,9 @@ func getAWSDriverInfoForFull(log log.T) (driverInfo []model.DriverInfo, err erro
 	return
 }
 
-// getAWSDriverInfoForNano runs powershell using Win32_PnPEntity and Get-WindowsDriver command
-// and collects and returns the driver information.
+// getAWSDriverInfoForNano collects and returns the driver information using Win32_PnPEntity and Get-WindowsDriver command.
 func getAWSDriverInfoForNano(log log.T) (driverInfo []model.DriverInfo, err error) {
 	var windowsDrivers []model.WindowsDriver
-	var pnpEntities []model.PnpEntity
 
 	// this queries AWS drivers in current Windows image to get Version.
 	properties := []string{originalFileNameProperty, versionProperty}
@@ -414,9 +338,9 @@ func getAWSDriverInfoForNano(log log.T) (driverInfo []model.DriverInfo, err erro
 		return
 	}
 
-	// this queries AWS drivers to get proper Name.
-	properties = []string{serviceProperty, nameProperty}
-	if err = runPowershell(&pnpEntities, getAllPnpEntitiesCmd, properties, true); err != nil {
+	// query AWS drivers to get proper Name.
+	var pnpEntities []platform.Win32_PnPEntity
+	if pnpEntities, err = platform.GetWMIData[platform.Win32_PnPEntity](getAllPnpEntitiesWhereClause); err != nil {
 		log.Infof("Error occurred while querying AWS drivers: %v", err.Error())
 		return
 	}
@@ -522,32 +446,36 @@ func runPowershell(jsonObj interface{}, command string, properties []string, exp
 }
 
 // getInstallationOptionBySKU returns installation option of current windows.
-func getInstallationOptionBySKU(sku int) string {
+func getInstallationOptionBySKU(log log.T) string {
 	// the server options only include nano, core or undefined
-	serverOptions := map[int]string{
-		0:   "Undefined",
-		12:  serverCore,
-		13:  serverCore,
-		14:  serverCore,
-		29:  serverCore,
-		39:  serverCore,
-		40:  serverCore,
-		41:  serverCore,
-		43:  serverCore,
-		44:  serverCore,
-		45:  serverCore,
-		46:  serverCore,
-		63:  serverCore,
-		143: nanoServer,
-		144: nanoServer,
-		147: serverCore,
-		148: serverCore,
+	serverOptions := map[string]string{
+		"0":   "Undefined",
+		"12":  serverCore,
+		"13":  serverCore,
+		"14":  serverCore,
+		"29":  serverCore,
+		"39":  serverCore,
+		"40":  serverCore,
+		"41":  serverCore,
+		"43":  serverCore,
+		"44":  serverCore,
+		"45":  serverCore,
+		"46":  serverCore,
+		"63":  serverCore,
+		"143": nanoServer,
+		"144": nanoServer,
+		"147": serverCore,
+		"148": serverCore,
 	}
 
-	if val, ok := serverOptions[sku]; ok {
-		return val
+	if sku, err := platform.PlatformSku(log); err == nil {
+		if val, ok := serverOptions[sku]; ok {
+			return val
+		} else {
+			// return full server if it's neither nano, core or undefined.
+			return fullServer
+		}
 	} else {
-		// return full server if it's neither nano, core or undefined.
-		return fullServer
+		return "Undefined"
 	}
 }

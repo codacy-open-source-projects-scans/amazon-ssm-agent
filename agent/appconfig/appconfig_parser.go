@@ -24,11 +24,6 @@ import (
 func parser(config *SsmagentConfig) {
 	log.Printf("processing appconfig overrides")
 
-	booleanStringOptions := []string{
-		"true",
-		"false",
-	}
-
 	// Agent creds profile
 	config.Profile.KeyAutoRotateDays = getNumericValue(
 		config.Profile.KeyAutoRotateDays,
@@ -106,6 +101,11 @@ func parser(config *SsmagentConfig) {
 		DefaultSsmAssociationFrequencyMinutesMin,
 		DefaultSsmAssociationFrequencyMinutesMax,
 		DefaultSsmAssociationFrequencyMinutes)
+	config.Ssm.HibernationMaxBackoffIntervalMinutes = getNumericValue(
+		config.Ssm.HibernationMaxBackoffIntervalMinutes,
+		DefaultHibernationMaxBackoffIntervalMinutesMin,
+		DefaultHibernationMaxBackoffIntervalMinutesMax,
+		DefaultHibernationMaxBackoffIntervalMinutes)
 	config.Ssm.AssociationLogsRetentionDurationHours = getNumericValueAboveMin(
 		config.Ssm.AssociationLogsRetentionDurationHours,
 		DefaultStateOrchestrationLogsRetentionDurationHoursMin,
@@ -114,13 +114,25 @@ func parser(config *SsmagentConfig) {
 		config.Ssm.RunCommandLogsRetentionDurationHours,
 		DefaultStateOrchestrationLogsRetentionDurationHoursMin,
 		DefaultRunCommandLogsRetentionDurationHours)
+	config.Ssm.SessionHandshakeTimeoutSeconds = getNumericValue(
+		config.Ssm.SessionHandshakeTimeoutSeconds,
+		DefaultSessionHandshakeTimeoutSecondsMin,
+		DefaultSessionHandshakeTimeoutSecondsMax,
+		DefaultSessionHandshakeTimeoutSeconds)
+	config.Ssm.CredentialRetryMaxSleepSeconds = getNumericValue(
+		config.Ssm.CredentialRetryMaxSleepSeconds,
+		DefaultCredentialRetryMaxSleepSecondsMin,
+		DefaultCredentialRetryMaxSleepSecondsMax,
+		DefaultCredentialRetryMaxSleepSeconds)
 	sessionLogsDestinationOptions := []string{SessionLogsDestinationDisk, SessionLogsDestinationNone}
 	config.Ssm.SessionLogsDestination = getStringEnum(config.Ssm.SessionLogsDestination,
 		sessionLogsDestinationOptions,
 		SessionLogsDestinationNone)
-	pluginLocalOutputCleanupOptions := []string{PluginLocalOutputCleanupAfterExecution,
+	pluginLocalOutputCleanupOptions := []string{
+		PluginLocalOutputCleanupAfterExecution,
 		PluginLocalOutputCleanupAfterUpload,
-		DefaultPluginOutputRetention}
+		DefaultPluginOutputRetention,
+	}
 	config.Ssm.PluginLocalOutputCleanup = getStringEnum(config.Ssm.PluginLocalOutputCleanup,
 		pluginLocalOutputCleanupOptions,
 		DefaultPluginOutputRetention)
@@ -134,7 +146,6 @@ func parser(config *SsmagentConfig) {
 		OrchestartionDirCleanupOtions,
 		DefaultOrchestrationDirCleanup)
 
-	config.Identity.Ec2SystemInfoDetectionResponse = getStringEnum(config.Identity.Ec2SystemInfoDetectionResponse, booleanStringOptions, "")
 	IdentityConsumptionOrderOptions := map[string]bool{
 		"OnPrem":         true,
 		"ECS":            true,

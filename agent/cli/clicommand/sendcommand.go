@@ -24,6 +24,8 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
 	"github.com/aws/amazon-ssm-agent/agent/cli/cliutil"
 	"github.com/aws/amazon-ssm-agent/agent/context"
@@ -33,7 +35,7 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/jsonutil"
 	"github.com/aws/amazon-ssm-agent/agent/log/logger"
 	"github.com/aws/amazon-ssm-agent/common/identity"
-	"github.com/twinj/uuid"
+	"github.com/aws/amazon-ssm-agent/common/utility"
 )
 
 const (
@@ -91,12 +93,22 @@ func (c *SendOfflineCommand) Execute(subcommands []string, parameters map[string
 		return errors.New(strings.Join(validation, "\n")), ""
 	}
 
-	agentIdentity, err := cliutil.GetAgentIdentity()
+	err := utility.IsRunningElevatedPermissions()
 	if err != nil {
 		return err, ""
 	}
 
-	if err, content := c.loadContent(agentIdentity, parameters[sendCommandContent][0]); err != nil {
+	agentConfig, err := cliutil.GetAgentConfig()
+	if err != nil {
+		return err, ""
+	}
+
+	agentIdentity, err := cliutil.GetAgentIdentity(agentConfig)
+	if err != nil {
+		return err, ""
+	}
+
+	if err, content := c.loadContent(agentConfig, agentIdentity, parameters[sendCommandContent][0]); err != nil {
 		return err, ""
 	} else if err := c.validateContent(content); err != nil {
 		return err, ""
@@ -157,19 +169,19 @@ func (SendOfflineCommand) validateSendCommandInput(subcommands []string, paramet
 }
 
 // loadContent loads raw json or json obtained from a URL into DocumentContent
-func (SendOfflineCommand) loadContent(agentIdentity identity.IAgentIdentity, rawContent string) (error, contracts.DocumentContent) {
+func (SendOfflineCommand) loadContent(agentConfig appconfig.SsmagentConfig, agentIdentity identity.IAgentIdentity, rawContent string) (error, contracts.DocumentContent) {
 	var content contracts.DocumentContent
 	if cliutil.ValidJson(rawContent) {
 		err := json.Unmarshal([]byte(rawContent), &content)
 		return err, content
 	}
-	var url = rawContent
+	url := rawContent
 	// TODO:MF: Write a URI loader utility - artifact really doesn't do that job
 	if strings.HasPrefix(strings.ToLower(url), "file://") {
 		url = url[7:]
 	}
 
-	context := context.Default(logger.NewSilentLogger(), appconfig.DefaultConfig(), agentIdentity)
+	context := context.Default(logger.NewSilentLogger(), agentConfig, agentIdentity)
 	input := &artifact.DownloadInput{SourceURL: url}
 	if output, err := artifact.Download(context, *input); err != nil {
 		return err, content
@@ -201,7 +213,7 @@ func (SendOfflineCommand) validateContent(content contracts.DocumentContent) err
 
 // submitCommandDocument
 func (SendOfflineCommand) submitCommandDocument(content string) (error, string) {
-	documentName := uuid.NewV4().String()
+	documentName := uuid.New().String()
 	documentPath := filepath.Join(appconfig.LocalCommandRoot, documentName)
 
 	if err := fileutil.MakeDirs(appconfig.LocalCommandRoot); err != nil {

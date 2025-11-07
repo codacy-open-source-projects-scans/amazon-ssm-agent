@@ -103,6 +103,18 @@ func runUpdateAgent(
 		pluginInput.TargetVersion = "None"
 	}
 
+	// If disk space is not sufficient, fail the update to prevent installation and notify user in output
+	// If loading disk space fails, continue to update (agent update is backed by rollback handler)
+	log.Infof("Checking available disk space ...")
+	if isDiskSpaceSufficient, err := util.IsDiskSpaceSufficientForUpdate(log); !isDiskSpaceSufficient || err != nil {
+		if err != nil {
+			output.MarkAsFailed(err)
+			return
+		}
+		output.MarkAsFailed(errors.New("Insufficient available disk space"))
+		return
+	}
+
 	//Download manifest file and populate manifest object
 	if downloadErr := s3util.DownloadManifest(manifest, pluginInput.Source); downloadErr != nil && downloadErr.Error != nil {
 		output.MarkAsFailed(downloadErr.Error)
@@ -145,18 +157,6 @@ func runUpdateAgent(
 		return
 	}
 
-	// If disk space is not sufficient, fail the update to prevent installation and notify user in output
-	// If loading disk space fails, continue to update (agent update is backed by rollback handler)
-	log.Infof("Checking available disk space ...")
-	if isDiskSpaceSufficient, err := util.IsDiskSpaceSufficientForUpdate(log); !isDiskSpaceSufficient || err != nil {
-		if err != nil {
-			output.MarkAsFailed(err)
-			return
-		}
-		output.MarkAsFailed(errors.New("Insufficient available disk space"))
-		return
-	}
-
 	log.Infof("Start Installation")
 	log.Infof("Hand over update process to %v", pluginInput.UpdaterName)
 	//Execute updater, hand over the update process
@@ -195,7 +195,7 @@ func runUpdateAgent(
 		if !isRunning {
 			errMsg := "Updater died before updating, make sure your system is supported"
 			log.Error(errMsg)
-			output.MarkAsFailed(fmt.Errorf(errMsg))
+			output.MarkAsFailed(fmt.Errorf("%s", errMsg))
 
 			exec.Kill(pid)
 			return

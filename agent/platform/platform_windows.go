@@ -39,10 +39,16 @@ const (
 	WindowsServer2016Version = 10
 
 	WindowsServer2025Version = "10.0.26100"
+
+	//BIOS param keys used for system info
+	BiosVersionParamKey      = "SMBIOSBIOSVersion"
+	BiosSerialNumberParamKey = "SerialNumber"
+	BiosManufacturerParamKey = "Manufacturer"
 )
 
 var (
-	getPlatformVersionRef = getPlatformVersion
+	getPlatformDetails = GetSingleWMIObject[Win32_OperatingSystem]
+	getSystemDetails   = GetSingleWMIObject[Win32_BIOS]
 )
 
 // isPlatformWindowsServer2012OrEarlier returns true if platform is Windows Server 2012 or earlier
@@ -51,7 +57,7 @@ func isPlatformWindowsServer2012OrEarlier(log log.T) (bool, error) {
 	var platformVersionInt int
 	var err error
 
-	if platformVersion, err = getPlatformVersionRef(log); err != nil {
+	if platformVersion, err = PlatformVersion(log); err != nil {
 		return false, err
 	}
 	versionParts := strings.Split(platformVersion, ".")
@@ -67,7 +73,7 @@ func isPlatformWindowsServer2012OrEarlier(log log.T) (bool, error) {
 
 // isPlatformWindowsServer2025OrLater returns true if current platform is Windows Server 2025 or later
 func isPlatformWindowsServer2025OrLater(log log.T) (bool, error) {
-	if platformVersion, err := getPlatformVersionRef(log); err != nil {
+	if platformVersion, err := PlatformVersion(log); err != nil {
 		return false, err
 	} else {
 		return isWindowsServer2025OrLater(platformVersion, log)
@@ -87,7 +93,7 @@ func isWindowsServer2025OrLater(platformVersion string, log log.T) (bool, error)
 // IsPlatformNanoServer returns true if SKU is 143 or 144
 func isPlatformNanoServer(log log.T) (bool, error) {
 	// Get platform sku information
-	if sku, err := getPlatformSku(log); err != nil {
+	if sku, err := PlatformSku(log); err != nil {
 		log.Infof("Failed to fetch sku - %v", err)
 		return false, err
 	} else {
@@ -96,47 +102,47 @@ func isPlatformNanoServer(log log.T) (bool, error) {
 	}
 }
 
-func getPlatformName(log log.T) (value string, err error) {
-	if osData, err := getPlatformDetails(log); err != nil {
-		return notAvailableMessage, err
+func getPlatformData(log log.T) (PlatformData, error) {
+	if osData, err := getPlatformDetails(""); err == nil {
+		return PlatformData{
+			Name:    osData.Caption,
+			Version: osData.Version,
+			Sku:     strconv.FormatUint(uint64(osData.OperatingSystemSKU), 10),
+			Type:    "windows",
+		}, nil
 	} else {
-		return osData.Caption, nil
-	}
-}
-
-func getPlatformType(_ log.T) (value string, err error) {
-	return "windows", nil
-}
-
-func getPlatformVersion(log log.T) (value string, err error) {
-	if osData, err := getPlatformDetails(log); err != nil {
-		return notAvailableMessage, err
-	} else {
-		return osData.Version, nil
-	}
-}
-
-func getPlatformSku(log log.T) (value string, err error) {
-	if osData, err := getPlatformDetails(log); err != nil {
-		return notAvailableMessage, err
-	} else {
-		return strconv.FormatUint(uint64(osData.OperatingSystemSKU), 10), nil
-	}
-}
-
-func getPlatformDetails(log log.T) (osData Win32_OperatingSystem, err error) {
-	if osData, err = GetSingleWMIObject(osData); err != nil {
 		log.Errorf("Failed to fetch OS details from WMI: %v", err)
+		return PlatformData{
+			Name:    notAvailableMessage,
+			Version: notAvailableMessage,
+			Sku:     notAvailableMessage,
+			Type:    "windows",
+		}, err
 	}
+}
 
-	return osData, err
+func initSystemInfoCache(log log.T, paramKey string) (string, error) {
+	if biosData, err := getSystemDetails(""); err == nil {
+		cache.Put(BiosVersionParamKey, biosData.SMBIOSBIOSVersion)
+		cache.Put(BiosSerialNumberParamKey, biosData.SerialNumber)
+		cache.Put(BiosManufacturerParamKey, biosData.Manufacturer)
+
+		var data string
+		var found bool
+		if data, found = cache.Get(paramKey); !found {
+			log.Warnf("Couldn't find mapping for the %v param key in the cache", paramKey)
+		}
+		return data, nil
+	} else {
+		log.Errorf("Failed to fetch BIOS details from WMI: %v", err)
+		return "", err
+	}
 }
 
 // fullyQualifiedDomainName returns the Fully Qualified Domain Name of the instance, otherwise the hostname
 func fullyQualifiedDomainName(log log.T) string {
-	var csData Win32_ComputerSystem
-	var err error
-	if csData, err = GetSingleWMIObject(csData); err != nil {
+	csData, err := GetSingleWMIObject[Win32_ComputerSystem]("")
+	if err != nil {
 		log.Errorf("Failed to fetch computer system details from WMI: %v", err)
 	}
 

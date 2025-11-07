@@ -18,6 +18,7 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
 	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/common/identity"
+	"github.com/aws/amazon-ssm-agent/common/telemetry"
 )
 
 // ICoreAgentContext defines a type that carries context specific data such as the logger.
@@ -26,6 +27,7 @@ type ICoreAgentContext interface {
 	AppConfig() *appconfig.SsmagentConfig
 	Identity() identity.IAgentIdentity
 	With(context string) ICoreAgentContext
+	WithTelemetryNamespace(namespace string) ICoreAgentContext
 }
 
 // CoreAgentContext defines a type that carries context specific data such as the logger.
@@ -42,6 +44,18 @@ func (c *CoreAgentContext) With(logContext string) ICoreAgentContext {
 	newContext := &CoreAgentContext{
 		context:   contextSlice,
 		log:       c.log.WithContext(contextSlice...),
+		appConfig: c.appConfig,
+		identity:  c.identity,
+	}
+	return newContext
+}
+
+// WithTelemetryNamespace returns a new context with the specified telemetry namespace.
+// All telemetry emission using this context will have this telemetry namespace.
+func (c *CoreAgentContext) WithTelemetryNamespace(telemetryNamespace string) ICoreAgentContext {
+	newContext := &CoreAgentContext{
+		context:   c.context,
+		log:       c.log.WithTelemetryNamespace(telemetryNamespace),
 		appConfig: c.appConfig,
 		identity:  c.identity,
 	}
@@ -67,7 +81,7 @@ func (c *CoreAgentContext) Identity() identity.IAgentIdentity {
 func NewCoreAgentContext(logger log.T, ssmAppconfig *appconfig.SsmagentConfig, agentIdentity identity.IAgentIdentity) (ICoreAgentContext, error) {
 	coreContext := &CoreAgentContext{
 		appConfig: ssmAppconfig,
-		log:       logger,
+		log:       logger.WithTelemetryNamespace(telemetry.SSMAgentNamespace),
 		identity:  agentIdentity,
 	}
 	return coreContext, nil

@@ -17,71 +17,80 @@
 package xendetector
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/aws/amazon-ssm-agent/common/identity/availableidentities/ec2/ec2detector/helper/mocks"
+	"github.com/aws/amazon-ssm-agent/agent/log"
+	logger "github.com/aws/amazon-ssm-agent/agent/mocks/log"
+	"github.com/aws/amazon-ssm-agent/common/identity/availableidentities/ec2/ec2detector/helper"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
 
 func TestIsEc2(t *testing.T) {
-	helper := &mocks.DetectorHelper{}
-	detector := &xenDetector{helper: helper}
+	detector := New("", "")
+	logMock := logger.NewMockLog()
+	tempMatchUuid := helper.MatchUuid
+	tempGetVendor := getVendor
+	tempGetUuid := getUuid
+	resetFunc := func() {
+		helper.MatchUuid = tempMatchUuid
+		getVendor = tempGetVendor
+		getUuid = tempGetUuid
+	}
 
-	detector.uuid = ""
-	detector.version = "someothervendor"
-	assert.False(t, detector.IsEc2())
+	getVendor = func(log.T, string, string) (string, string) { return "", "" }
+	getUuid = func(log.T, string, string) (string, string) { return "", "" }
+	status, errCodes := detector.IsEc2(logMock)
+	resetFunc()
+	assert.False(t, status)
+	assert.Equal(t, len(errCodes), 0)
 
-	detector.uuid = ""
-	detector.version = expectedVersionSuffix + "SomeRandomPostFix"
-	assert.False(t, detector.IsEc2())
+	getVendor = func(log.T, string, string) (string, string) { return expectedVersionSuffix, "" }
+	getUuid = func(log.T, string, string) (string, string) { return "", "" }
+	status, errCodes = detector.IsEc2(logMock)
+	resetFunc()
+	assert.False(t, status)
+	assert.Equal(t, len(errCodes), 0)
 
-	helper.On("MatchUuid", mock.Anything).Return(false).Once()
-	detector.uuid = "someuuid"
-	detector.version = expectedVersionSuffix
-	assert.False(t, detector.IsEc2())
+	getVendor = func(log.T, string, string) (string, string) { return expectedVersionSuffix, "" }
+	getUuid = func(log.T, string, string) (string, string) { return "123", "" }
+	helper.MatchUuid = func(log.T, string) bool { return false }
+	status, errCodes = detector.IsEc2(logMock)
+	resetFunc()
+	assert.False(t, status)
+	assert.Equal(t, len(errCodes), 0)
 
-	helper.On("MatchUuid", mock.Anything).Return(true).Once()
-	detector.uuid = "someuuid"
-	detector.version = expectedVersionSuffix
-	assert.True(t, detector.IsEc2())
+	getVendor = func(log.T, string, string) (string, string) { return "someotherversion", "" }
+	getUuid = func(log.T, string, string) (string, string) { return "", "" }
+	status, errCodes = detector.IsEc2(logMock)
+	resetFunc()
+	assert.False(t, status)
+	assert.Equal(t, len(errCodes), 0)
 
-	helper.On("MatchUuid", mock.Anything).Return(true).Once()
-	detector.uuid = "someuuid"
-	detector.version = "SomeRandomRefix" + expectedVersionSuffix
-	assert.True(t, detector.IsEc2())
+	getVendor = func(log.T, string, string) (string, string) {
+		return fmt.Sprintf("%s%s", expectedVersionSuffix, "SomeRandomPostfix"), ""
+	}
+	getUuid = func(log.T, string, string) (string, string) { return "", "" }
+	status, errCodes = detector.IsEc2(logMock)
+	resetFunc()
+	assert.False(t, status)
+	assert.Equal(t, len(errCodes), 0)
 
-	helper.AssertExpectations(t)
-}
+	getVendor = func(log.T, string, string) (string, string) { return expectedVersionSuffix, "" }
+	getUuid = func(log.T, string, string) (string, string) { return "123", "" }
+	helper.MatchUuid = func(log.T, string) bool { return true }
+	status, errCodes = detector.IsEc2(logMock)
+	resetFunc()
+	assert.True(t, status)
+	assert.Equal(t, len(errCodes), 0)
 
-func TestGetUuid(t *testing.T) {
-	helper := &mocks.DetectorHelper{}
-	detector := &xenDetector{helper: helper}
-
-	helper.On("GetSystemInfo", xenUuidSystemInfoParam).Return("").Once()
-	assert.Equal(t, "", detector.getUuid())
-	assert.Equal(t, "", detector.uuid)
-
-	helper.On("GetSystemInfo", xenUuidSystemInfoParam).Return("something").Once()
-	assert.Equal(t, "something", detector.getUuid())
-	assert.Equal(t, "something", detector.uuid)
-	assert.Equal(t, "something", detector.getUuid())
-
-	helper.AssertExpectations(t)
-}
-
-func TestGetVendor(t *testing.T) {
-	helper := &mocks.DetectorHelper{}
-	detector := &xenDetector{helper: helper}
-
-	helper.On("GetSystemInfo", xenVersionSystemInfoParam).Return("").Once()
-	assert.Equal(t, "", detector.getVersion())
-	assert.Equal(t, "", detector.version)
-
-	helper.On("GetSystemInfo", xenVersionSystemInfoParam).Return("something").Once()
-	assert.Equal(t, "something", detector.getVersion())
-	assert.Equal(t, "something", detector.version)
-	assert.Equal(t, "something", detector.getVersion())
-
-	helper.AssertExpectations(t)
+	getVendor = func(log.T, string, string) (string, string) {
+		return fmt.Sprintf("%s%s", "SomeRandomPrefix", expectedVersionSuffix), ""
+	}
+	getUuid = func(log.T, string, string) (string, string) { return "123", "" }
+	helper.MatchUuid = func(log.T, string) bool { return true }
+	status, errCodes = detector.IsEc2(logMock)
+	resetFunc()
+	assert.True(t, status)
+	assert.Equal(t, len(errCodes), 0)
 }

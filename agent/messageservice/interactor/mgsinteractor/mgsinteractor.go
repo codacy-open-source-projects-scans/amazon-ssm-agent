@@ -42,8 +42,8 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/session/retry"
 	"github.com/aws/amazon-ssm-agent/agent/session/service"
 	"github.com/aws/amazon-ssm-agent/agent/ssmconnectionchannel"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/twinj/uuid"
 )
 
 const (
@@ -295,7 +295,7 @@ externalLoop:
 				log.Debug("reply channel closed")
 				break externalLoop
 			}
-			replyUUID := uuid.NewV4()
+			replyUUID := uuid.New()
 			log.Infof("received reply for %v %v with message id %v", reply.ResultType, reply.MessageID, replyUUID.String())
 			replyObject, err := replytypes.GetReplyTypeObject(mgs.context, reply, replyUUID, 0)
 			if err != nil {
@@ -323,8 +323,8 @@ func (mgs *MGSInteractor) listenIncomingAgentMessages() {
 	defer func() {
 		log.Debug("listen incoming messages thread in MGS interactor ended")
 		if r := recover(); r != nil {
-			log.Errorf("listen incoming messages panic: \n%v", r)
-			log.Errorf("Stacktrace:\n%s", debug.Stack())
+			log.TelemetryErrorf("listen incoming messages panic: \n%v", r)
+			log.TelemetryErrorf("Stacktrace:\n%s", debug.Stack())
 			time.Sleep(2 * time.Second)
 			go mgs.listenIncomingAgentMessages()
 		}
@@ -457,7 +457,7 @@ func (mgs *MGSInteractor) processAgentJobMessage(agentMessage mgsContracts.Agent
 
 func (mgs *MGSInteractor) sendDocResponse(payloadDoc messageContracts.SendReplyPayload, docState *contracts.DocumentState) {
 	log := mgs.context.Log()
-	replyUUID := uuid.NewV4()
+	replyUUID := uuid.New()
 	commandTopic := interactorutils.GetTopicFromDocResult(contracts.RunCommandResult, docState.DocumentType)
 	agentMsg, err := interactorutils.GenerateAgentJobReplyPayload(log, replyUUID, docState.DocumentInformation.MessageID, payloadDoc, commandTopic)
 	if err != nil {
@@ -501,7 +501,7 @@ func (mgs *MGSInteractor) buildAgentJobAckMessageAndSend(ackMessageId uuid.UUID,
 		log.Errorf("Cannot build AgentJobAck message %s", err)
 		return err
 	}
-	replyUUID := uuid.NewV4()
+	replyUUID := uuid.New()
 	agentMessage := &mgsContracts.AgentMessage{
 		MessageType:    mgsContracts.AgentJobAcknowledgeMessage,
 		SchemaVersion:  1,
@@ -557,6 +557,9 @@ var setupControlChannel = func(context context.T, mgsService service.Service, in
 				return nil, err
 			}
 			controlChannel.AuditLogScheduler.ScheduleAuditEvents()
+			if controlChannel.TelemetryExporter != nil {
+				controlChannel.TelemetryExporter.StartExporter()
+			}
 			return controlChannel, nil
 		},
 		GeometricRatio:      mgsConfig.RetryGeometricRatio,

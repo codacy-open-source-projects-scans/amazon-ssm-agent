@@ -14,11 +14,11 @@
 package appconfig
 
 import (
+	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"io/ioutil"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -31,12 +31,10 @@ type GetStringValueTest struct {
 	Output       string
 }
 
-var (
-	getStringValueTests = []GetStringValueTest{
-		{"", "test", "test"},
-		{"val", "test", "val"},
-	}
-)
+var getStringValueTests = []GetStringValueTest{
+	{"", "test", "test"},
+	{"val", "test", "val"},
+}
 
 func TestGetStringValue(t *testing.T) {
 	for _, test := range getStringValueTests {
@@ -55,14 +53,12 @@ type GetNumericValueTest struct {
 	Output       int
 }
 
-var (
-	getNumericValueTests = []GetNumericValueTest{
-		{0, 10, 100, 50, 50},   // empty
-		{1, 10, 100, 50, 50},   // less than min
-		{200, 10, 100, 50, 50}, // greater than max
-		{20, 10, 100, 50, 20},  // within range
-	}
-)
+var getNumericValueTests = []GetNumericValueTest{
+	{0, 10, 100, 50, 50},   // empty
+	{1, 10, 100, 50, 50},   // less than min
+	{200, 10, 100, 50, 50}, // greater than max
+	{20, 10, 100, 50, 20},  // within range
+}
 
 func TestGetNumericValue(t *testing.T) {
 	for _, test := range getNumericValueTests {
@@ -74,7 +70,7 @@ func TestGetNumericValue(t *testing.T) {
 // Validate invalid values for json
 func TestInvalidJsonVal(t *testing.T) {
 	path, _ := os.Getwd()
-	var sampleJsonPath = filepath.Join(path, "sample-app-config.json")
+	sampleJsonPath := filepath.Join(path, "sample-app-config.json")
 
 	originalFunc := retrieveAppConfigPath
 	defer func() {
@@ -107,20 +103,28 @@ type GetNumeric64ValueTest struct {
 	Output       int64
 }
 
-var (
-	getNumeric64ValueTests = []GetNumeric64ValueTest{
-		{0, 10, 100000000000000000, 50, 50},                                // empty
-		{1, 10, 100000000000000000, 50, 50},                                // less than min
-		{200000000000000000, 10, 100000000000000000, 50, 50},               // greater than max
-		{30000000000000000, 10, 100000000000000000, 50, 30000000000000000}, // within range
-	}
-)
+var getNumeric64ValueTests = []GetNumeric64ValueTest{
+	{0, 10, 100000000000000000, 50, 50},                                // empty
+	{1, 10, 100000000000000000, 50, 50},                                // less than min
+	{200000000000000000, 10, 100000000000000000, 50, 50},               // greater than max
+	{30000000000000000, 10, 100000000000000000, 50, 30000000000000000}, // within range
+}
 
 func TestGetNumeric64Value(t *testing.T) {
 	for _, test := range getNumeric64ValueTests {
 		output := getNumeric64Value(test.Input, test.MinValue, test.MaxValue, test.DefaultValue)
 		assert.Equal(t, test.Output, output)
 	}
+}
+
+func TestDefaultValue_HibernationMaxBackoffIntervalMinutes(t *testing.T) {
+	agentConfig := DefaultConfig()
+	assert.Equal(t, agentConfig.Ssm.HibernationMaxBackoffIntervalMinutes, DefaultHibernationMaxBackoffIntervalMinutes)
+}
+
+func TestDefaultValue_SessionHandshakeTimeoutSeconds(t *testing.T) {
+	agentConfig := DefaultConfig()
+	assert.Equal(t, agentConfig.Ssm.SessionHandshakeTimeoutSeconds, DefaultSessionHandshakeTimeoutSeconds)
 }
 
 func TestIdentityConsumptionOrder_InvalidConsumptionOrderValue(t *testing.T) {
@@ -160,4 +164,50 @@ func TestIdentityCredentialsValue_InvalidCredentialsProviderToDefault(t *testing
 	agentConfig.Identity.CustomIdentities[0].CredentialsProvider = DefaultCustomIdentityCredentialsProvider
 	parser(&agentConfig)
 	assert.Equal(t, agentConfig.Identity.CustomIdentities[0].CredentialsProvider, DefaultCustomIdentityCredentialsProvider)
+}
+
+func TestDefaultValue_CredentialRetryMaxSleepSeconds(t *testing.T) {
+	agentConfig := DefaultConfig()
+	assert.Equal(t, agentConfig.Ssm.CredentialRetryMaxSleepSeconds, DefaultCredentialRetryMaxSleepSeconds)
+	assert.Equal(t, agentConfig.Ssm.CredentialRetryMaxSleepSeconds, 1800)
+}
+
+func TestCredentialRetryMaxSleepSecondsOverride(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int
+		expected int
+	}{
+		{"below minimum: 30sec", 30, DefaultCredentialRetryMaxSleepSeconds},
+		{"at minimum: 60sec", 60, 60},
+		{"within rang 300sec", 300, 300},
+		{"within rang 900sec", 900, 900},
+		{"at maximum: 1800sec", 1800, 1800},
+		{"above maximum", 3600, DefaultCredentialRetryMaxSleepSeconds},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path, _ := os.Getwd()
+			sampleJsonPath := filepath.Join(path, "test-credential-retry-config.json")
+
+			originalFunc := retrieveAppConfigPath
+			defer func() {
+				os.Remove(sampleJsonPath)
+				retrieveAppConfigPath = originalFunc
+			}()
+
+			tempJson := []byte(fmt.Sprintf(`{ "Ssm": { "CredentialRetryMaxSleepSeconds": %d } }`, test.input))
+			if err := ioutil.WriteFile(sampleJsonPath, tempJson, ReadWriteAccess); err != nil {
+				return
+			}
+
+			retrieveAppConfigPath = func() (string, error) {
+				return sampleJsonPath, nil
+			}
+			outputJsonConfig, _ := Config(true)
+
+			assert.Equal(t, test.expected, outputJsonConfig.Ssm.CredentialRetryMaxSleepSeconds)
+		})
+	}
 }

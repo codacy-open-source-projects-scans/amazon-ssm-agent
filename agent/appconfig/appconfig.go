@@ -39,13 +39,13 @@ func Config(reload bool) (SsmagentConfig, error) {
 	if reload || !isLoaded() {
 		var agentConfig SsmagentConfig
 		agentConfig = DefaultConfig()
+		agentConfig.Os.Name = runtime.GOOS
+		agentConfig.Agent.Version = version.Version
+
 		path, pathErr := retrieveAppConfigPath()
 		if pathErr != nil {
 			return agentConfig, nil
 		}
-		agentConfig.Os.Name = runtime.GOOS
-		agentConfig.Agent.Version = version.Version
-
 		// Process config override
 		fmt.Printf("Applying config override from %s.\n", path)
 
@@ -90,37 +90,39 @@ func getAppConfigPath() (path string, err error) {
 
 // DefaultConfig returns default ssm agent configuration
 func DefaultConfig() SsmagentConfig {
-
-	var credsProfile = CredentialProfile{
+	credsProfile := CredentialProfile{
 		ShareCreds:        true,
 		KeyAutoRotateDays: defaultProfileKeyAutoRotateDays,
 	}
 	var s3 S3Cfg
-	var mds = MdsCfg{
+	mds := MdsCfg{
 		CommandWorkersLimit:      DefaultCommandWorkersLimit,
 		StopTimeoutMillis:        DefaultStopTimeoutMillis,
 		CommandRetryLimit:        DefaultCommandRetryLimit,
 		CommandWorkerBufferLimit: DefaultCommandWorkerBufferLimit,
 	}
-	var mgs = MgsConfig{
+	mgs := MgsConfig{
 		SessionWorkersLimit:           DefaultSessionWorkersLimit,
 		StopTimeoutMillis:             DefaultStopTimeoutMillis,
 		SessionWorkerBufferLimit:      DefaultSessionWorkerBufferLimit,
 		DeniedPortForwardingRemoteIPs: DefaultDeniedPortForwardingRemoteIPs,
 	}
-	var ssm = SsmCfg{
+	ssm := SsmCfg{
 		HealthFrequencyMinutes:                DefaultSsmHealthFrequencyMinutes,
 		AssociationFrequencyMinutes:           DefaultSsmAssociationFrequencyMinutes,
 		AssociationRetryLimit:                 5,
 		CustomInventoryDefaultLocation:        DefaultCustomInventoryFolder,
+		HibernationMaxBackoffIntervalMinutes:  DefaultHibernationMaxBackoffIntervalMinutes,
 		AssociationLogsRetentionDurationHours: DefaultAssociationLogsRetentionDurationHours,
 		RunCommandLogsRetentionDurationHours:  DefaultRunCommandLogsRetentionDurationHours,
 		SessionLogsRetentionDurationHours:     DefaultSessionLogsRetentionDurationHours,
 		SessionLogsDestination:                SessionLogsDestinationNone,
 		PluginLocalOutputCleanup:              DefaultPluginOutputRetention,
 		OrchestrationDirectoryCleanup:         DefaultOrchestrationDirCleanup,
+		SessionHandshakeTimeoutSeconds:        DefaultSessionHandshakeTimeoutSeconds,
+		CredentialRetryMaxSleepSeconds:        DefaultCredentialRetryMaxSleepSeconds,
 	}
-	var agent = AgentInfo{
+	agent := AgentInfo{
 		Name:                                    "amazon-ssm-agent",
 		OrchestrationRootDir:                    defaultOrchestrationRootDirName,
 		ContainerMode:                           false,
@@ -128,27 +130,29 @@ func DefaultConfig() SsmagentConfig {
 		TelemetryMetricsToCloudWatch:            false,
 		TelemetryMetricsToSSM:                   true,
 		TelemetryMetricsNamespace:               DefaultTelemetryNamespace,
+		GlobalEnhancedTelemetryEnabled:          true,
 		AuditExpirationDay:                      DefaultAuditExpirationDay,
 		LongRunningWorkerMonitorIntervalSeconds: defaultLongRunningWorkerMonitorIntervalSeconds,
 		ShouldPurgeInstanceProfileRoleCreds:     false,
 		ForceFileIPC:                            false,
 		GoMaxProcForAgentWorker:                 0,
+		UseDualStackEndpoint:                    false,
 	}
 
-	var os = OsInfo{
+	os := OsInfo{
 		Lang:    "en-US",
 		Version: "1",
 	}
-	var identity = IdentityCfg{
+	identity := IdentityCfg{
 		ConsumptionOrder: DefaultIdentityConsumptionOrder,
 		CustomIdentities: []*CustomIdentity{},
 	}
 	var birdwatcher BirdwatcherCfg
-	var kms = KmsConfig{
+	kms := KmsConfig{
 		RequireKMSChallengeResponse: DefaultRequireKMSChallengeResponse,
 	}
 
-	var ssmagentCfg = SsmagentConfig{
+	ssmagentCfg := SsmagentConfig{
 		Profile:     credsProfile,
 		Mds:         mds,
 		Ssm:         ssm,

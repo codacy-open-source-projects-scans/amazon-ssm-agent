@@ -18,6 +18,7 @@
 package platform
 
 import (
+	"fmt"
 	"testing"
 
 	logger "github.com/aws/amazon-ssm-agent/agent/mocks/log"
@@ -26,15 +27,18 @@ import (
 
 func TestVersion_PlatformWithBrackets(t *testing.T) {
 	logMock := logger.NewMockLog()
+	tmpFileExists := fileExists
 	fileExists = func(filePath string) bool {
-		if filePath == systemReleaseFile {
-			return true
-		}
-		return false
+		return filePath == systemReleaseFile
 	}
+	tmpReadAllText := readAllText
 	readAllText = func(filePath string) (text string, err error) {
 		return "Red Hat Enterprise Linux Server release 6.10 (Santiago)", nil
 	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
 	name, version, err := getPlatformDetails(logMock)
 	assert.Equal(t, "Red Hat Enterprise Linux Server", name)
 	assert.Equal(t, "6.10", version)
@@ -43,17 +47,179 @@ func TestVersion_PlatformWithBrackets(t *testing.T) {
 
 func TestVersion_PlatformWithOutBrackets(t *testing.T) {
 	logMock := logger.NewMockLog()
+	tmpFileExists := fileExists
 	fileExists = func(filePath string) bool {
-		if filePath == systemReleaseFile {
-			return true
-		}
-		return false
+		return filePath == systemReleaseFile
 	}
-	readAllText = func(filePath string) (text string, err error) {
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
 		return "Red Hat Enterprise Linux Server release 7", nil
 	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
 	name, version, err := getPlatformDetails(logMock)
 	assert.Equal(t, "Red Hat Enterprise Linux Server", name)
 	assert.Equal(t, "7", version)
 	assert.Nil(t, err)
+}
+
+func TestPlatformNameAndVersion(t *testing.T) {
+	ClearCache()
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		return filePath == systemReleaseFile
+	}
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
+		return "Red Hat Enterprise Linux Server release 6.78", nil
+	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
+	logMock := logger.NewMockLog()
+	platformName, err := PlatformName(logMock)
+	assert.Equal(t, "Red Hat Enterprise Linux Server", platformName)
+	assert.Nil(t, err)
+	platformVersion, err := PlatformVersion(logMock)
+	assert.Equal(t, "6.78", platformVersion)
+	assert.Nil(t, err)
+}
+
+func TestPlatformNameAndVersionWithError(t *testing.T) {
+	ClearCache()
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		return filePath == systemReleaseFile
+	}
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
+		return "", fmt.Errorf("platform name and version error")
+	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
+	logMock := logger.NewMockLog()
+	platformName, err := PlatformName(logMock)
+	assert.Equal(t, notAvailableMessage, platformName)
+	assert.NotNil(t, err)
+	platformVersion, err := PlatformVersion(logMock)
+	assert.Equal(t, notAvailableMessage, platformVersion)
+	assert.NotNil(t, err)
+}
+
+func TestGetSystemInfo(t *testing.T) {
+	ClearCache()
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		return true
+	}
+	testValue := "test_value"
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
+		return testValue, nil
+	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
+	logMock := logger.NewMockLog()
+
+	returnedValue, err := GetSystemInfo(logMock, "")
+	assert.Equal(t, testValue, returnedValue)
+	assert.Nil(t, err)
+}
+
+func TestGetSystemInfoCacheHit(t *testing.T) {
+	ClearCache()
+	cacheInitCount := 0
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		cacheInitCount++
+		return true
+	}
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
+		return "test_value", nil
+	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
+	logMock := logger.NewMockLog()
+
+	GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	assert.Equal(t, 1, cacheInitCount)
+}
+
+func TestGetSystemInfoCacheMiss(t *testing.T) {
+	ClearCache()
+	cacheInitCount := 0
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		cacheInitCount++
+		return true
+	}
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
+		return "test_value", nil
+	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
+	logMock := logger.NewMockLog()
+
+	GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	GetSystemInfo(logMock, XenVersionSystemInfoParamKey)
+	assert.Equal(t, 2, cacheInitCount)
+}
+
+func TestGetSystemInfoWithError(t *testing.T) {
+	ClearCache()
+	cacheInitCount := 0
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		cacheInitCount++
+		return true
+	}
+	tmpReadAllText := readAllText
+	readAllText = func(_ string) (text string, err error) {
+		return "", fmt.Errorf("system info error")
+	}
+	defer func() {
+		fileExists = tmpFileExists
+		readAllText = tmpReadAllText
+	}()
+	logMock := logger.NewMockLog()
+
+	uuid, err := GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	assert.Equal(t, "", uuid)
+	assert.NotNil(t, err)
+	//make sure we don't cache values with errors
+	GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	assert.Equal(t, 2, cacheInitCount)
+}
+
+func TestGetSystemInfoWithNonExistingParam(t *testing.T) {
+	ClearCache()
+	cacheInitCount := 0
+	tmpFileExists := fileExists
+	fileExists = func(filePath string) bool {
+		cacheInitCount++
+		return false
+	}
+	defer func() { fileExists = tmpFileExists }()
+	logMock := logger.NewMockLog()
+
+	uuid, err := GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	assert.Equal(t, "", uuid)
+	assert.ErrorIs(t, err, ErrFileNotFound)
+	//make sure we don't cache values for non existing params
+	GetSystemInfo(logMock, XenUuidSystemInfoParamKey)
+	assert.Equal(t, 2, cacheInitCount)
 }

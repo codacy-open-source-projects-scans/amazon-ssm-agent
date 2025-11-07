@@ -246,7 +246,7 @@ func RunPlugins(
 			pluginOutputs[pluginID].Code = 0
 			pluginOutputs[pluginID].Output = logMessage
 		case failStep:
-			err := fmt.Errorf(logMessage)
+			err := fmt.Errorf("%s", logMessage)
 			pluginOutputs[pluginID].Status = contracts.ResultStatusFailed
 			pluginOutputs[pluginID].Error = err.Error()
 			log.Error(err)
@@ -548,7 +548,7 @@ func evaluatePreconditions(
 				} else if strings.Compare(value[0].InitialArgumentValue, "platformType") == 0 || strings.Compare(value[1].InitialArgumentValue, "platformType") == 0 {
 					// keep original logic for platformType variable
 					// Platform type of OS on the instance
-					instancePlatformType, _ := platform.PlatformType(log)
+					instancePlatformType := platform.PlatformType(log)
 					log.Debugf("OS platform type of this instance = %s", instancePlatformType)
 
 					// Variable and value can be in any order, i.e. both "StringEquals": ["platformType", "Windows"]

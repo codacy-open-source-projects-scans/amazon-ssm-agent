@@ -15,6 +15,7 @@
 package appconfig
 
 // CredentialProfile represents configurations for aws credential profile
+
 type CredentialProfile struct {
 	ShareCreds        bool
 	ShareProfile      string
@@ -38,18 +39,24 @@ type SsmCfg struct {
 	AssociationFrequencyMinutes    int
 	AssociationRetryLimit          int
 	CustomInventoryDefaultLocation string
+	// Max back off interval minutes for agent hibernation
+	HibernationMaxBackoffIntervalMinutes int
 	// Hours to retain association logs in the orchestration folder
 	AssociationLogsRetentionDurationHours int
 	// Hours to retain run command logs in the orchestration folder
 	RunCommandLogsRetentionDurationHours int
 	// Hours to retain session logs in the orchestration folder
 	SessionLogsRetentionDurationHours int
+	// Session handshake timeout in seconds
+	SessionHandshakeTimeoutSeconds int
 	// Configure where you want Session Manager to write session data
 	SessionLogsDestination string
 	// Configure when after execution it is safe to delete local plugin output files in orchestration folder
 	PluginLocalOutputCleanup string
 	// Configure only when it is safe to delete orchestration folder after document execution. This config overrides PluginLocalOutputCleanup when set.
 	OrchestrationDirectoryCleanup string
+	// Max sleep duration in seconds for credential retry before attempting to refresh credentials on failure
+	CredentialRetryMaxSleepSeconds int
 }
 
 // AgentInfo represents metadata for amazon-ssm-agent
@@ -66,6 +73,7 @@ type AgentInfo struct {
 	TelemetryMetricsToCloudWatch            bool
 	TelemetryMetricsToSSM                   bool
 	TelemetryMetricsNamespace               string
+	GlobalEnhancedTelemetryEnabled          bool
 	LongRunningWorkerMonitorIntervalSeconds int
 	// Temp config to purge cached EC2 credentials on disk if using instance profile role
 	ShouldPurgeInstanceProfileRoleCreds bool
@@ -73,6 +81,8 @@ type AgentInfo struct {
 	ForceFileIPC                        bool
 	// denotes GOMAXPROCS value for legacy agent worker
 	GoMaxProcForAgentWorker int
+	// Enable dual-stack (IPv4 and IPv6) endpoints for AWS services
+	UseDualStackEndpoint bool
 }
 
 // MgsConfig represents configuration for Message Gateway service
@@ -106,6 +116,12 @@ type S3Cfg struct {
 	LogKey    string
 }
 
+// CloudWatchLogsCfg represents configuration for CloudWatch Logs
+type CloudWatchLogsCfg struct {
+	Endpoint string
+	Region   string
+}
+
 // BirdwatcherCfg represents configuration related to ConfigurePackage Birdwatcher integration
 type BirdwatcherCfg struct {
 	ForceEnable bool
@@ -113,16 +129,17 @@ type BirdwatcherCfg struct {
 
 // SsmagentConfig stores agent configuration values.
 type SsmagentConfig struct {
-	Profile     CredentialProfile
-	Mds         MdsCfg
-	Ssm         SsmCfg
-	Mgs         MgsConfig
-	Agent       AgentInfo
-	Os          OsInfo
-	S3          S3Cfg
-	Birdwatcher BirdwatcherCfg
-	Kms         KmsConfig
-	Identity    IdentityCfg
+	Profile        CredentialProfile
+	Mds            MdsCfg
+	Ssm            SsmCfg
+	Mgs            MgsConfig
+	Agent          AgentInfo
+	Os             OsInfo
+	S3             S3Cfg
+	CloudWatchLogs CloudWatchLogsCfg
+	Birdwatcher    BirdwatcherCfg
+	Kms            KmsConfig
+	Identity       IdentityCfg
 }
 
 // AppConstants represents some run time constant variable for various module.
@@ -144,7 +161,6 @@ type CustomIdentity struct {
 
 // IdentityCfg stores identity consumption order and custom identities
 type IdentityCfg struct {
-	Ec2SystemInfoDetectionResponse string
-	ConsumptionOrder               []string
-	CustomIdentities               []*CustomIdentity
+	ConsumptionOrder []string
+	CustomIdentities []*CustomIdentity
 }

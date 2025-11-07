@@ -20,6 +20,7 @@ package nitrodetector
 import (
 	"strings"
 
+	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/common/identity/availableidentities/ec2/ec2detector/helper"
 )
 
@@ -29,39 +30,37 @@ const (
 )
 
 type nitroDetector struct {
-	helper helper.DetectorHelper
-	vendor string
-	uuid   string
+	uuidParamKey   string
+	vendorParamKey string
 }
 
-func (d *nitroDetector) getUuid() string {
-	if d.uuid == "" {
-		d.uuid = d.helper.GetSystemInfo(nitroUuidSystemInfoParam)
+var getVendor, getUuid = helper.GetHostInfo, helper.GetHostInfo
+
+func (d *nitroDetector) IsEc2(log log.T) (bool, []string) {
+	var errCodes []string
+	vendorInfo, vendorErrCode := getVendor(log, d.vendorParamKey, "NV")
+	if vendorErrCode != "" {
+		errCodes = append(errCodes, vendorErrCode)
+	}
+	uuidInfo, uuidErrCode := getUuid(log, d.uuidParamKey, "NU")
+	if uuidErrCode != "" {
+		errCodes = append(errCodes, uuidErrCode)
 	}
 
-	return d.uuid
-}
-
-func (d *nitroDetector) getVendor() string {
-	if d.vendor == "" {
-		d.vendor = d.helper.GetSystemInfo(nitroVendorSystemInfoParam)
+	if len(errCodes) > 0 {
+		return false, errCodes
+	} else {
+		return strings.ToLower(vendorInfo) == expectedNitroVendor && helper.MatchUuid(log, uuidInfo), nil
 	}
-
-	return d.vendor
-}
-
-func (d *nitroDetector) IsEc2() bool {
-	if strings.ToLower(d.getVendor()) != expectedNitroVendor {
-		return false
-	}
-
-	return d.helper.MatchUuid(d.getUuid())
 }
 
 func (d *nitroDetector) GetName() string {
 	return Name
 }
 
-func New(helper helper.DetectorHelper) *nitroDetector {
-	return &nitroDetector{helper: helper}
+func New(uuidParamKey, vendorParamKey string) *nitroDetector {
+	return &nitroDetector{
+		uuidParamKey:   uuidParamKey,
+		vendorParamKey: vendorParamKey,
+	}
 }

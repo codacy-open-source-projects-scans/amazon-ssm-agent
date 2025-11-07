@@ -15,6 +15,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -37,7 +38,14 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/session/utility"
 	"github.com/aws/amazon-ssm-agent/agent/ssm"
 	"github.com/aws/amazon-ssm-agent/agent/startup"
+	"github.com/aws/amazon-ssm-agent/agent/startup/serialport"
+	"github.com/aws/amazon-ssm-agent/agent/telemetry/collector"
+	dynamicConfiguration "github.com/aws/amazon-ssm-agent/agent/telemetry/dynamic_configuration"
+	agentIdentity "github.com/aws/amazon-ssm-agent/common/identity"
 	"github.com/aws/amazon-ssm-agent/common/identity/identity"
+	"github.com/aws/amazon-ssm-agent/common/telemetry"
+	telemetryConfig "github.com/aws/amazon-ssm-agent/common/telemetry/config"
+	telemetryContext "github.com/aws/amazon-ssm-agent/common/telemetry/context"
 )
 
 const (
@@ -73,14 +81,18 @@ func start(log log.T, shouldCheckHibernation bool) (ssmAgent agent.ISSMAgent, er
 	}
 
 	context := context.Default(log, config, agentIdentity, "[ssm-agent-worker]")
+	log = context.Log() // get the logger again. It will have the telemetry namespace
 
-	//Reset password for default RunAs user if already exists
+	// initalize the telemetry SDK
+	initializeTelemetry(log, agentIdentity, context)
+
+	// Reset password for default RunAs user if already exists
 	sessionUtil := &utility.SessionUtil{}
 	if err := sessionUtil.ResetPasswordIfDefaultUserExists(context); err != nil {
 		log.Warnf("Reset password failed, %v", err)
 	}
 
-	//Initializing the health module to send empty health pings to the service.
+	// Initializing the health module to send empty health pings to the service.
 	healthModule := health.NewHealthCheck(context, ssm.NewService(context))
 	hibernateState := hibernation.NewHibernateMode(healthModule, context)
 	messageBusClient = messagebus.NewMessageBus(context)
@@ -109,7 +121,8 @@ func start(log log.T, shouldCheckHibernation bool) (ssmAgent agent.ISSMAgent, er
 	// Health check would include creating a health module and sending empty health pings to the service.
 	// If response is positive, start the agent, else retry and eventually back off (hibernate/passive mode).
 	if status, hibernationErr := healthModule.GetAgentState(); shouldCheckHibernation && status == health.Passive {
-		//Starting hibernate mode
+		// Starting hibernate mode
+		go serialport.EmitSerialPortMessage(context.Log(), fmt.Sprintf("SSM Agent entering hibernation due to error: <error>%v</error>", hibernationErr.Error()))
 		context.Log().Info("Entering SSM Agent hibernate - ", hibernationErr)
 		go func() {
 			defer func() {
@@ -125,6 +138,26 @@ func start(log log.T, shouldCheckHibernation bool) (ssmAgent agent.ISSMAgent, er
 		err = startAgent(ssmAgent, context)
 	}
 	return
+}
+
+func initializeTelemetry(log log.T, agentIdentity agentIdentity.IAgentIdentity, context context.T) {
+	if !telemetryConfig.IsTelemetryEnabled(context.Log(), context.Identity(), context.AppConfig()) {
+		log.Info("Telemetry is disabled")
+		return
+	}
+
+	//Initialize dynamic configuration required by telemetry
+	dynamicConfiguration.NewTelemetryDynamicConfiguration(log, true, filepath.Join(appconfig.DynamicConfigFolderPath, appconfig.TelemetryDynamicConfigFileName))
+	telemetryCtx := telemetryContext.NewTelemetryContext(telemetry.AgentWorkerChannelName, log, agentIdentity)
+	err := telemetry.Initialize(telemetryCtx)
+	if err != nil {
+		log.Warnf("Telemetry failed to initialize with error %v", err)
+	}
+	// start telemetry collector
+	err = collector.StartCollection(context)
+	if err != nil {
+		log.Warnf("Failed to start telemetry collection with error %v", err)
+	}
 }
 
 func startAgent(ssmAgent agent.ISSMAgent, context context.T) (err error) {

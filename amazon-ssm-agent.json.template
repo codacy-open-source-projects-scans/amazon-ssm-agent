@@ -15,12 +15,15 @@
         "Endpoint": "",
         "HealthFrequencyMinutes": 5,
         "CustomInventoryDefaultLocation" : "",
+        "HibernationMaxBackoffIntervalMinutes" : 60,
         "AssociationLogsRetentionDurationHours" : 24,
         "RunCommandLogsRetentionDurationHours" : 336,
         "SessionLogsRetentionDurationHours" : 336,
+        "SessionHandshakeTimeoutSeconds" : 15,
         "SessionLogsDestination": "none",
         "PluginLocalOutputCleanup": "",
-        "OrchestrationDirectoryCleanup": ""
+        "OrchestrationDirectoryCleanup": "",
+        "CredentialRetryMaxSleepSeconds": 1800
     },
     "Mgs": {
         "Region": "",
@@ -36,7 +39,7 @@
             "fd00:ec2::123",
             "169.254.169.250",
             "169.254.169.251",
-            "fd00:ec2::240"
+            "fd00:ec2::250"
         ]
     },
     "Agent": {
@@ -45,8 +48,10 @@
         "SelfUpdate": false,
         "TelemetryMetricsToCloudWatch": false,
         "TelemetryMetricsToSSM": true,
+        "GlobalEnhancedTelemetryEnabled": true,
         "AuditExpirationDay" : 7,
-        "LongRunningWorkerMonitorIntervalSeconds": 60
+        "LongRunningWorkerMonitorIntervalSeconds": 60,
+        "UseDualStackEndpoint": false
     },
     "Os": {
         "Lang": "en-US",
@@ -62,5 +67,9 @@
     "Kms": {
         "Endpoint": "",
         "RequireKMSChallengeResponse": false
+    },
+    "CloudWatchLogs": {
+        "Endpoint": "",
+        "Region": ""
     }
 }

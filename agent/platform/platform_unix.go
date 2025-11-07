@@ -18,6 +18,7 @@
 package platform
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,44 +31,34 @@ import (
 )
 
 const (
-	osReleaseFile           = "/etc/os-release"
-	systemReleaseFile       = "/etc/system-release"
-	centosReleaseFile       = "/etc/centos-release"
-	redhatReleaseFile       = "/etc/redhat-release"
-	bottlerocketReleaseFile = "/etc/bottlerocket-release"
-	unameCommand            = "/usr/bin/uname"
-	lsbReleaseCommand       = "lsb_release"
-	fetchingDetailsMessage  = "fetching platform details from %v"
-	errorOccurredMessage    = "There was an error running %v, err: %v"
+	osReleaseFile                 = "/etc/os-release"
+	systemReleaseFile             = "/etc/system-release"
+	centosReleaseFile             = "/etc/centos-release"
+	redhatReleaseFile             = "/etc/redhat-release"
+	bottlerocketReleaseFile       = "/etc/bottlerocket-release"
+	unameCommand                  = "/usr/bin/uname"
+	lsbReleaseCommand             = "lsb_release"
+	fetchingDetailsMessage        = "fetching platform details from %v"
+	errorOccurredMessage          = "There was an error running %v, err: %v"
+	NitroVendorSystemInfoParamKey = "/sys/class/dmi/id/sys_vendor"
+	NitroUuidSystemInfoParamKey   = "/sys/class/dmi/id/product_uuid"
+	XenVersionSystemInfoParamKey  = "/sys/hypervisor/version/extra"
+	XenUuidSystemInfoParamKey     = "/sys/hypervisor/uuid"
 )
 
 var (
 	readAllText = fileutil.ReadAllText
 	fileExists  = fileutil.Exists
+
+	ErrFileNotFound   = errors.New("file not found")
+	ErrFilePermission = errors.New("no sufficient permissions")
+	ErrFileRead       = errors.New("error reading from file")
 )
 
 // this structure is similar to the /etc/os-release file
 type osRelease struct {
 	NAME       string
 	VERSION_ID string
-}
-
-func getPlatformName(log log.T) (value string, err error) {
-	value, _, err = getPlatformDetails(log)
-	return
-}
-
-func getPlatformType(log log.T) (value string, err error) {
-	return "linux", nil
-}
-
-func getPlatformVersion(log log.T) (value string, err error) {
-	_, value, err = getPlatformDetails(log)
-	return
-}
-
-func getPlatformSku(_ log.T) (value string, err error) {
-	return
 }
 
 func isPlatformWindowsServer2012OrEarlier(_ log.T) (bool, error) {
@@ -80,6 +71,15 @@ func isPlatformWindowsServer2025OrLater(_ log.T) (bool, error) {
 
 func isWindowsServer2025OrLater(_ string, _ log.T) (bool, error) {
 	return false, nil
+}
+
+func getPlatformData(log log.T) (PlatformData, error) {
+	platformName, platformVersion, err := getPlatformDetails(log)
+	return PlatformData{
+		Name:    platformName,
+		Version: platformVersion,
+		Type:    "linux",
+	}, err
 }
 
 func getPlatformDetails(log log.T) (name string, version string, err error) {
@@ -259,6 +259,25 @@ func getPlatformDetails(log log.T) (name string, version string, err error) {
 	return
 }
 
+func initSystemInfoCache(log log.T, paramKey string) (string, error) {
+	if !fileExists(paramKey) {
+		log.Warnf("Could not find file %v. Will skip caching the data", paramKey)
+		return "", ErrFileNotFound
+	}
+
+	if text, err := readAllText(paramKey); err == nil {
+		data := strings.TrimSpace(text)
+		cache.Put(paramKey, data)
+		return data, nil
+	} else if os.IsPermission(err) {
+		log.Errorf("No sufficient permissions to read file %v, error %v. Will skip caching the data", paramKey, err)
+		return "", errors.Join(ErrFilePermission, err)
+	} else {
+		log.Errorf("Could not read file %v, error %v. Will skip caching the data", paramKey, err)
+		return "", errors.Join(ErrFileRead, err)
+	}
+}
+
 var hostNameCommand = filepath.Join("/bin", "hostname")
 
 // fullyQualifiedDomainName returns the Fully Qualified Domain Name of the instance, otherwise the hostname
@@ -287,6 +306,6 @@ func fullyQualifiedDomainName(log log.T) string {
 	return strings.TrimSpace(hostName)
 }
 
-func isPlatformNanoServer(log log.T) (bool, error) {
+func isPlatformNanoServer(_ log.T) (bool, error) {
 	return false, nil
 }

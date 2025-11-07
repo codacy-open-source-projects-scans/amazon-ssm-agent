@@ -24,7 +24,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/amazon-ssm-agent/agent/log"
@@ -33,15 +32,6 @@ import (
 const (
 	platformDetailsCommand = "sw_vers"
 )
-
-var platformInfoMap = map[string]string{}
-var platformQueryMutex = sync.Mutex{}
-
-func getPlatformName(log log.T) (value string, err error) {
-	value, err = getPlatformDetail(log, "ProductName")
-	log.Debugf("platform name: %v", value)
-	return
-}
 
 func isPlatformWindowsServer2012OrEarlier(_ log.T) (bool, error) {
 	return false, nil
@@ -55,18 +45,13 @@ func isWindowsServer2025OrLater(_ string, _ log.T) (bool, error) {
 	return false, nil
 }
 
-func getPlatformType(_ log.T) (string, error) {
-	return "macos", nil
-}
-
-func getPlatformVersion(log log.T) (value string, err error) {
-	value, err = getPlatformDetail(log, "ProductVersion")
-	log.Debugf("platform version: %v", value)
-	return
-}
-
-func getPlatformSku(_ log.T) (string, error) {
-	return "", nil
+func getPlatformData(log log.T) (PlatformData, error) {
+	platformName, platformVersion, err := getPlatformDetails(log)
+	return PlatformData{
+		Name:    platformName,
+		Version: platformVersion,
+		Type:    "macos",
+	}, err
 }
 
 var execWithTimeout = func(cmd string, param ...string) ([]byte, error) {
@@ -76,27 +61,21 @@ var execWithTimeout = func(cmd string, param ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, cmd, param...).Output()
 }
 
-func getPlatformDetail(log log.T, param string) (value string, err error) {
+func getPlatformDetails(log log.T) (name string, version string, err error) {
 	var contentsBytes []byte
-	platformQueryMutex.Lock()
-	defer platformQueryMutex.Unlock()
-
-	if mapVal, ok := platformInfoMap[param]; ok {
-		return mapVal, nil
-	}
+	name, version = notAvailableMessage, notAvailableMessage
 
 	if contentsBytes, err = execWithTimeout(platformDetailsCommand); err != nil {
 		log.Errorf("Failed to query for platform info: %v", err)
-		return notAvailableMessage, err
+		return name, version, err
 	}
 
 	platformString := strings.TrimSpace(string(contentsBytes))
 	if len(platformString) == 0 {
-		return notAvailableMessage, fmt.Errorf("received empty string when querying for platform info")
+		return name, version, fmt.Errorf("received empty string when querying for platform info")
 	}
 
 	log.Debugf("queried for platform info: %s", platformString)
-	platformInfoMap = map[string]string{}
 	for _, platformLine := range strings.Split(platformString, "\n") {
 		if len(platformLine) == 0 {
 			continue
@@ -111,21 +90,23 @@ func getPlatformDetail(log log.T, param string) (value string, err error) {
 
 		platformInfoKey := strings.TrimSpace(platformLineSplit[0])
 		platformInfoVal := strings.TrimSpace(platformLineSplit[1])
-		platformInfoMap[platformInfoKey] = platformInfoVal
+
+		if platformInfoKey == "ProductName" {
+			name = platformInfoVal
+		} else if platformInfoKey == "ProductVersion" {
+			version = platformInfoVal
+		}
 	}
 
-	if mapVal, ok := platformInfoMap[param]; ok {
-		return mapVal, err
-	}
-
-	log.Warnf("Failed to parse platform info for %s in string\n%s", param, platformString)
-	return notAvailableMessage, fmt.Errorf("failed to find platform key")
+	return name, version, err
 }
+
+func initSystemInfoCache(_ log.T, _ string) (string, error) { return "", nil }
 
 var hostNameCommand = filepath.Join("/bin", "hostname")
 
 // fullyQualifiedDomainName returns the Fully Qualified Domain Name of the instance, otherwise the hostname
-func fullyQualifiedDomainName(log log.T) string {
+func fullyQualifiedDomainName(_ log.T) string {
 	var hostName, fqdn string
 	var err error
 
@@ -148,6 +129,6 @@ func fullyQualifiedDomainName(log log.T) string {
 	return strings.TrimSpace(hostName)
 }
 
-func isPlatformNanoServer(log log.T) (bool, error) {
+func isPlatformNanoServer(_ log.T) (bool, error) {
 	return false, nil
 }

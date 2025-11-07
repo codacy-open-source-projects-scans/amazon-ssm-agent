@@ -19,6 +19,7 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
 	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/common/identity"
+	"github.com/aws/amazon-ssm-agent/common/telemetry"
 )
 
 // T transfers context specific data across different execution boundaries.
@@ -28,6 +29,7 @@ type T interface {
 	Log() log.T
 	AppConfig() appconfig.SsmagentConfig
 	With(context string) T
+	WithTelemetryNamespace(namespace string) T
 	CurrentContext() []string
 	AppConstants() *appconfig.AppConstants
 	Identity() identity.IAgentIdentity
@@ -40,7 +42,7 @@ func Default(logger log.T, ssmAppconfig appconfig.SsmagentConfig, agentIdentity 
 		MinHealthFrequencyMinutes: appconfig.DefaultSsmHealthFrequencyMinutesMin,
 		MaxHealthFrequencyMinutes: appconfig.DefaultSsmHealthFrequencyMinutesMax,
 	}
-	return &defaultContext{context: contextList, log: logger.WithContext(contextList...), appconfig: ssmAppconfig, appconst: appconst, identity: agentIdentity}
+	return &defaultContext{context: contextList, log: logger.WithContext(contextList...).WithTelemetryNamespace(telemetry.SSMAgentNamespace), appconfig: ssmAppconfig, appconst: appconst, identity: agentIdentity}
 }
 
 type defaultContext struct {
@@ -56,6 +58,19 @@ func (c *defaultContext) With(logContext string) T {
 	newContext := &defaultContext{
 		context:   contextSlice,
 		log:       c.log.WithContext(contextSlice...),
+		appconfig: c.appconfig,
+		appconst:  c.appconst,
+		identity:  c.identity,
+	}
+	return newContext
+}
+
+// WithTelemetryNamespace returns a new context with the specified telemetry namespace.
+// All telemetry emission using this context will have this telemetry namespace.
+func (c *defaultContext) WithTelemetryNamespace(namespace string) T {
+	newContext := &defaultContext{
+		context:   c.context,
+		log:       c.log.WithTelemetryNamespace(namespace),
 		appconfig: c.appconfig,
 		appconst:  c.appconst,
 		identity:  c.identity,

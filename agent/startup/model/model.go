@@ -55,12 +55,6 @@ type WindowsInfo struct {
 	CurrentMinorVersionNumber int    `json:"CurrentMinorVersionNumber"`
 }
 
-// OperatingSystemInfo contains Version and OperatingSystemSKU from Win32_OperatingSystem.
-type OperatingSystemInfo struct {
-	Version            string `json:"Version"`
-	OperatingSystemSKU int    `json:"OperatingSystemSKU"`
-}
-
 // PvEntity contains Version from HKLM:\SOFTWARE\Amazon\PVDriver.
 type PvPackageInfo struct {
 	Name    string `json:"PSChildName"`
@@ -71,19 +65,6 @@ type PvPackageInfo struct {
 type NitroEnclavesPackageInfo struct {
 	Name    string `json:"PSChildName"`
 	Version string `json:"Version"`
-}
-
-// PnpEntity contains DeviceId, Service, Name from Win32_PnpEntity.
-type PnpEntity struct {
-	DeviceID string `json:"DeviceID"`
-	Service  string `json:"Service"`
-	Name     string `json:"Name"`
-}
-
-// PnpSignedDriver contains Description, DriverVersion from Win32_PnpSignedDriver.
-type PnpSignedDriver struct {
-	Description   string `json:"Description"`
-	DriverVersion string `json:"DriverVersion"`
 }
 
 // WindowsDriver contains OriginalFileName and Version from result of Get-WindowsDriver.

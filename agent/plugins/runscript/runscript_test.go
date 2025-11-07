@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/aws/amazon-ssm-agent/agent/mocks/context"
 	"github.com/aws/amazon-ssm-agent/agent/mocks/executers"
 	"github.com/aws/amazon-ssm-agent/agent/mocks/log"
@@ -35,7 +37,6 @@ import (
 	"github.com/aws/amazon-ssm-agent/common/runtimeconfig/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/twinj/uuid"
 )
 
 type TestCase struct {
@@ -151,6 +152,11 @@ func testRunScripts(t *testing.T, testCase TestCase, rawInput bool) {
 
 		runCommandID := "21cd24ac-4aca-4d53-bd65-c06d64b7b343"
 
+		envVariables := map[string]string{
+			"aws_Message":        "Hello World",
+			"aws_AnotherMessage": "Hello Planet",
+		}
+
 		// call method under test
 		if rawInput {
 			// prepare plugin input
@@ -158,7 +164,7 @@ func testRunScripts(t *testing.T, testCase TestCase, rawInput bool) {
 			err := jsonutil.Remarshal(testCase.Input, &rawPluginInput)
 			assert.Nil(t, err)
 
-			p.runCommandsRawInput(pluginID, rawPluginInput, orchestrationDirectory, defaultWorkingDirectory, mockCancelFlag, mockIOHandler, runCommandID)
+			p.runCommandsRawInput(pluginID, rawPluginInput, orchestrationDirectory, defaultWorkingDirectory, mockCancelFlag, mockIOHandler, runCommandID, envVariables)
 		} else {
 			p.runCommands(pluginID, testCase.Input, orchestrationDirectory, defaultWorkingDirectory, mockCancelFlag, mockIOHandler)
 		}
@@ -242,6 +248,23 @@ func TestSetSharedCredsEnvironment(t *testing.T) {
 	assert.Equal(t, "SomeProfile", pluginInput.Environment["AWS_PROFILE"])
 	r.AssertExpectations(t)
 	remoteProvider.AssertExpectations(t)
+}
+
+func TestSetPluginCommandEnvironment(t *testing.T) {
+	p := &Plugin{}
+	pluginInput := RunScriptPluginInput{
+		Environment: map[string]string{},
+	}
+
+	envVariables := map[string]string{
+		"aws_Message":        "Hello World",
+		"aws_AnotherMessage": "Hello Planet",
+	}
+
+	p.setPluginCommandEnvironment(pluginInput, envVariables)
+	for k, _ := range envVariables {
+		assert.Equal(t, pluginInput.Environment[k], envVariables[k])
+	}
 }
 
 func TestSetCommandIdEnvironment(t *testing.T) {
@@ -354,7 +377,7 @@ func testExecuteMultiInput(t *testing.T, testCases []TestCase) {
 		pluginProperties := arrayPropertyBuilder(t, testCases)
 
 		//Create messageId which is in the format of aws.ssm.<commandID>.<InstanceID>
-		commandID := uuid.NewV4().String()
+		commandID := uuid.New().String()
 
 		// call plugin
 		p.Execute(
@@ -386,7 +409,7 @@ func testExecute(t *testing.T, testCase TestCase) {
 		pluginProperties := singleValuePropertyBuilder(t, testCase)
 
 		//Create messageId which is in the format of aws.ssm.<commandID>.<InstanceID>
-		commandID := uuid.NewV4().String()
+		commandID := uuid.New().String()
 
 		// call plugin
 		p.Execute(
@@ -418,7 +441,7 @@ func testExecuteWithEnvironment(t *testing.T, testCase TestCase) {
 		pluginProperties := singleValuePropertyBuilder(t, testCase)
 
 		//Create messageId which is in the format of aws.ssm.<commandID>.<InstanceID>
-		commandID := uuid.NewV4().String()
+		commandID := uuid.New().String()
 
 		// call plugin
 		p.Execute(

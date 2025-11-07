@@ -1,5 +1,112 @@
 Latest
 ===============
+- Add initial IPv6 support with UseDualStackEndpoint configuration option
+- Fix CPU utilization issue for instances with thousands of network interfaces
+
+3.3.3185.0
+===============
+- Add IMDS retry count to account for EC2 droplet refresh
+- Fix duplicate uid error logging in MDS module
+- Update aws:Domainjoin plugin logging from Log4Net to NLog
+- Upgrade Go version to 1.24.7
+- Update github.com/go-git/go-git/v5 to 5.15.0
+- Update golang.org/x/crypto to v0.37.0
+- Update golang.org/x/net to v0.39.0
+- Update golang.org/x/sys to v0.32.0
+
+3.3.3050.0
+===============
+- Add EU sovereign cloud S3 endpoint for DownloadContent plugin
+- Add configurable credential rotation max backoff interval
+
+3.3.2958.0
+===============
+- Migrate from twinj/uuid to google/uuid library
+- Allow newer agent versions to be installed when deploying on Greengrass
+- Harden function to remove non-admin run command documents in execution path
+- Fix macOS credential refresher test issue due to missing Debugf from serialport skip file
+- Enhance testability of custom certificate usage in debug SSM Agent builds
+- Decouple serial port from startup and add credential refresher serialport logging
+- Add GlobalEnhancedTelemetryEnabled config to README
+- Add cloudwatch logs endpoint configuration to optional config for agent
+- Update Greengrass component version
+
+3.3.2746.0
+===============
+- Add file privilege check before processing document state file
+- Storing AWS document interpolation ENV_VAR types as environment variables
+- Throw explicit error when running local cli as non-priviledged user
+- Harden telemetry dynamic config folder permissions
+- Add configuration option for HandshakeTimeout
+
+3.3.2656.0
+===============
+- Improve unit tests
+- Add setup for emitting telemetry logs and metrics
+- Add initial selection of error logs to emit to telemetry
+- Simplify checkstyle and import organization in build scripts
+- Update golang.org/x/net from v0.37.0 to v0.38.0
+
+3.3.2471.0
+===============
+- Improve unit tests
+- Agent hibernation reason is logged to EC2 system logs
+- Add metrics for the EC2Detector and IMDS EC2 status findings
+- Change Linux DomainJoin plugin parameter KeepHostName to accept both boolean and string
+- Upgrade GoLang to version 1.23.8
+
+3.3.2299.0
+===============
+- Allow custom hibernation max interval configuration
+- Refactor hibernation to fix ping leak and correct interval behavior
+- Remove dependency on s3:GetObject for aws:configurePackage plugin
+- Fix issue where ssm-setup-cli fails to detect whether agent is running or stopped in non-English locales
+- Fix comparison operator issue in aws:domainJoin script when executed in Ubuntu dash
+- Fix IPV6 address for IMDS in documentation and deny rule
+- Add hasHardenedACL check to avoid costly recursive hardening of the data directory on reboot
+- Update golang.org/x/crypto from v0.32.0 to v0.36.0
+- Update golang.org/x/net from v0.34.0 to v0.37.0
+- Update golang.org/x/sys from v0.29.0 to v0.31.0
+- Update golang.org/x/oauth2 from v0.24.0 to v0.28.0
+- Upgrade GoLang version from v1.22 to v1.23
+- Update Argot config and ensure client uses DisableHTTPDowngrade
+- Add unit tests in multiple modules
+
+3.3.1957.0
+===============
+- Add and fix unit tests
+- Add and use BuildSafePath method to prevent path traversal in orchestration directory
+- Add new targets in Argot config and add summary for ssh.Unmarshal function
+- Fix Agent version not being loaded for UserAgent when no config file exists
+- Refactor and simplify existing logic within the ec2detector
+- Send EC2 detection results as part of the UserAgent header with UpdateInstanceInformation request
+- Use short log file name and avoid file issue causing infinite loop in session log upload
+
+3.3.1802.0
+===============
+- Fix TestDocumentWorkerCrash integration tests
+- Implement caching for platform data and refactor the code to use cached data if available
+- Replace Get-CimInstance commands with WMI alternatives for retrieving system info
+- Add configuration file and script to run the Argot static analyzer to check for dataflow and other security invariants
+- Updater to allow downgrade if current version is inactive
+- Allow Agent Updater to emit intermediate metrics during updates and add new Updater metrics
+- Agent setup cli verification to rely only on exit codes
+- Update SSM Agent public key to verify SSM-Setup-CLI binary signature
+- Update GPG keyring to verify SSM-Agent binary signature using SSM-Setup-CLI
+- Fix code branching within setupcli_data_integrity_linux.sh
+- Use powershell for simplified, updated and no prompt unzip in install.bat
+- Update build Golang version to 1.22.11
+
+3.3.1611.0
+===============
+- Update aws-sdk-go from 1.51.20 to 1.55.5
+- Update golang.org/x/crypto from 0.24.0 to 0.32.0
+- Update github.com/go-git/go-git/v5 from 5.12.0 to 5.13.1
+- Update golang.org/x/net from 0.26.0 to 0.34.0
+- Update golang.org/x/oauth2 from 0.0.0-20211005180243-6b3c2da341f1 to 0.24.0
+
+3.3.1345.0
+===============
 - Revert "Update configurePackage to use fixed download method"
 - Revert "Use a single syscall for route table for health check IP"
 

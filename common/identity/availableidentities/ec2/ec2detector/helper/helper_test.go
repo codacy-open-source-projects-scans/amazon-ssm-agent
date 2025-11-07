@@ -11,49 +11,56 @@
 // either express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
+//go:build !darwin
+// +build !darwin
+
 package helper
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/aws/amazon-ssm-agent/agent/log"
+	logger "github.com/aws/amazon-ssm-agent/agent/mocks/log"
 	"github.com/stretchr/testify/assert"
 )
 
-func testUpperLower(t *testing.T, eFpected bool, testCase string) {
-	var obj detectorHelper
-	assert.Equal(t, eFpected, obj.MatchUuid(testCase))
-	assert.Equal(t, eFpected, obj.MatchUuid(strings.ToLower(testCase)))
-	assert.Equal(t, eFpected, obj.MatchUuid(strings.ToUpper(testCase)))
-}
-
 func TestUuidMatcher(t *testing.T) {
+	logMock := logger.NewMockLog()
+	temp := GetHostInfo
+	defer func() { GetHostInfo = temp }()
 	// big endian formats
-	testUpperLower(t, true, "EC2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, true, "EC2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 
-	testUpperLower(t, false, "2ECFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "E2CFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "C2EFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "CE2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "2CEFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "2ECFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "E2CFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "C2EFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "CE2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "2CEFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 
-	testUpperLower(t, false, "FC2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "EF2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "ECFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FC2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "EF2FFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "ECFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 
 	// little endian formats
-	testUpperLower(t, true, "FFFF2FEC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, true, "FFFF2FEC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 
-	testUpperLower(t, false, "FFFF2FCE-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "FFFFCF2E-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "FFFFCFE2-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "FFFFEFC2-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "FFFFEF2C-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFF2FCE-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFFCF2E-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFFCFE2-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFFEFC2-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFFEF2C-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 
-	testUpperLower(t, false, "FFFFFFEC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "FFFF2FEF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
-	testUpperLower(t, false, "FFFF2FFC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFFFFEC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFF2FEF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, false, "FFFF2FFC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
 
 	// both
-	testUpperLower(t, true, "EC2F2FEC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+	testUpperLower(t, logMock, true, "EC2F2FEC-FFFF-FFFF-FFFF-FFFFFFFFFFFF")
+}
+
+func testUpperLower(t *testing.T, log log.T, expected bool, testCase string) {
+	assert.Equal(t, expected, MatchUuid(log, testCase))
+	assert.Equal(t, expected, MatchUuid(log, strings.ToLower(testCase)))
+	assert.Equal(t, expected, MatchUuid(log, strings.ToUpper(testCase)))
 }

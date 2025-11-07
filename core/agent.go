@@ -28,8 +28,12 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/log"
 	"github.com/aws/amazon-ssm-agent/agent/log/logger"
 	"github.com/aws/amazon-ssm-agent/agent/proxyconfig"
+	"github.com/aws/amazon-ssm-agent/common/telemetry"
+	telemetryConfig "github.com/aws/amazon-ssm-agent/common/telemetry/config"
+	telemetryContext "github.com/aws/amazon-ssm-agent/common/telemetry/context"
 	"github.com/aws/amazon-ssm-agent/core/app"
 	"github.com/aws/amazon-ssm-agent/core/app/bootstrap"
+	"github.com/aws/amazon-ssm-agent/core/app/context"
 	"github.com/aws/amazon-ssm-agent/core/app/runtimeconfiginit"
 	"github.com/aws/amazon-ssm-agent/core/ipc/messagebus"
 	"github.com/aws/amazon-ssm-agent/core/workerprovider/longrunningprovider/datastore/filesystem"
@@ -77,6 +81,10 @@ func initializeBasicModules(log log.T) (app.CoreAgent, log.T, error) {
 	if err != nil {
 		return nil, log, err
 	}
+	log = context.Log() // get the logger again. It will have the telemetry namespace
+
+	// initalize telemetry SDK
+	initializeTelemetry(log, context)
 
 	// Initialize runtime configs
 	rci := runtimeconfiginit.New(context.Log(), context.Identity())
@@ -93,6 +101,20 @@ func initializeBasicModules(log log.T) (app.CoreAgent, log.T, error) {
 
 	ssmAgentCore := app.NewSSMCoreAgent(context, message)
 	return ssmAgentCore, context.Log(), nil
+}
+
+func initializeTelemetry(log log.T, context context.ICoreAgentContext) {
+	appConfig := context.AppConfig()
+	if appConfig == nil || !telemetryConfig.IsTelemetryEnabled(context.Log(), context.Identity(), *appConfig) {
+		log.Info("Telemetry is disabled")
+		return
+	}
+
+	telemetryCtx := telemetryContext.NewTelemetryContext(telemetry.CoreAgentChannelName, log, context.Identity())
+	err := telemetry.Initialize(telemetryCtx)
+	if err != nil {
+		log.Warnf("telemetry failed to initialize with error %v", err)
+	}
 }
 
 func startCoreAgent(log log.T, ssmAgentCore app.CoreAgent, statusChan *contracts.StatusComm) {

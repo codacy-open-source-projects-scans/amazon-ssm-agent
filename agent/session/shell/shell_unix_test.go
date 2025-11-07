@@ -33,9 +33,9 @@ import (
 	mgsContracts "github.com/aws/amazon-ssm-agent/agent/session/contracts"
 	"github.com/aws/amazon-ssm-agent/agent/task"
 	"github.com/google/shlex"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/twinj/uuid"
 )
 
 // Testing Execute
@@ -185,7 +185,7 @@ func (suite *ShellTestSuite) TestExecuteWithCWLoggingEnabled() {
 	// When CW logging is enabled with streaming disabled then IsFileComplete is expected to be true since log to CW is uploaded once at the end of the session
 	expectedIsFileComplete := true
 	suite.mockCWL.On("IsLogGroupPresent", testCwLogGroupName).Return(true, &testCwlLogGroup)
-	suite.mockCWL.On("StreamData", testCwLogGroupName, sessionId, sessionId+mgsConfig.LogFileExtension, expectedIsFileComplete, false, mock.Anything, false, false).Return(true)
+	suite.mockCWL.On("StreamData", testCwLogGroupName, sessionId, mgsConfig.LogFileName+mgsConfig.LogFileExtension, expectedIsFileComplete, false, mock.Anything, false, false).Return(true)
 
 	suite.plugin.Execute(
 		contracts.Configuration{
