@@ -38,8 +38,11 @@ import (
 )
 
 const (
-	failedReplyProcessingLimit = 50
-	updateSuffix               = "update"
+	failedReplyProcessingLimit      = 50
+	updateSuffix                    = "update"
+	runCommandMaxRetryCount         = 6
+	defaultMaxRetryCount            = 2
+	sendFailedReplyFrequencyMinutes = 2
 )
 
 var (
@@ -66,7 +69,11 @@ func (mgs *MGSInteractor) deleteFailedReply(log log.T, fileName string) {
 	if fileutil.Exists(absoluteFileName) {
 		err := fileutil.DeleteFile(absoluteFileName)
 		if err != nil {
-			log.Errorf("encountered error %v while deleting file %v", err, absoluteFileName)
+			if os.IsNotExist(err) {
+				log.Infof("file %v does not exist", absoluteFileName)
+			} else {
+				log.Errorf("encountered error %v while deleting file %v", err, absoluteFileName)
+			}
 		} else {
 			log.Debugf("successfully deleted file %v", absoluteFileName)
 		}
@@ -104,8 +111,8 @@ func (mgs *MGSInteractor) sendFailedReplies() {
 			continue
 		}
 		// sending it at least once after the first failure
-		if utils.IsValidReplyRequest(reply, contracts.MessageGatewayService) == false && docPersistData.RetryNumber > 1 {
-			log.Debug("Reply is old, document execution must have timed out. Deleting the reply")
+		if !utils.IsValidReplyRequest(reply, contracts.MessageGatewayService) && docPersistData.RetryNumber >= getMaxRetryCount(docPersistData.AgentResult.ResultType) {
+			log.Debug("Reply is old, document execution must have timed out. Deleting the reply: %s", docPersistData.ReplyId)
 			mgs.deleteFailedReply(log, reply)
 			continue
 		}
@@ -138,6 +145,15 @@ func (mgs *MGSInteractor) sendFailedReplies() {
 	}
 }
 
+// since RunCommand will have immediate retries in case of failures, we need different retry limit for it
+func getMaxRetryCount(replyType contracts.ResultType) int {
+	if replyType == contracts.RunCommandResult {
+		return runCommandMaxRetryCount
+	}
+
+	return defaultMaxRetryCount
+}
+
 func (mgs *MGSInteractor) isSendFailedReplyJobScheduled() bool {
 	mgs.mutex.Lock()
 	defer mgs.mutex.Unlock()
@@ -150,7 +166,7 @@ func (mgs *MGSInteractor) startSendFailedReplyJob() {
 	mgs.mutex.Lock()
 	defer mgs.mutex.Unlock()
 	if mgs.sendReplyProp.sendFailedReplyJob == nil {
-		if mgs.sendReplyProp.sendFailedReplyJob, err = scheduler.Every(utils.SendFailedReplyFrequencyMinutes).Minutes().Run(mgs.sendFailedReplies); err != nil {
+		if mgs.sendReplyProp.sendFailedReplyJob, err = scheduler.Every(sendFailedReplyFrequencyMinutes).Minutes().Run(mgs.sendFailedReplies); err != nil {
 			log.Errorf("unable to schedule send failed reply job. %v", err)
 		}
 	}
@@ -277,7 +293,7 @@ func getFailedReplyLocation(identity identity.IAgentIdentity, fileName string) s
 }
 
 // persistResult saves agent message in the local disk
-func (mgs *MGSInteractor) persistResult(replyBytes AgentResultLocalStoreData) (err error) {
+func (mgs *MGSInteractor) persistResult(replyBytes AgentResultLocalStoreData) (fileName string, err error) {
 	log := mgs.context.Log()
 	log.Debugf("persisting result %+v", replyBytes)
 	content, err := jsonutil.Marshal(replyBytes)
@@ -286,7 +302,7 @@ func (mgs *MGSInteractor) persistResult(replyBytes AgentResultLocalStoreData) (e
 	} else {
 		files, _ := getFileNames(getFailedReplyDirectory(mgs.context.Identity()))
 		persistTime := time.Now().UTC()
-		fileName := fmt.Sprintf("%v_%v", persistTime.Format("2006-01-02T15-04-05"), replyBytes.ReplyId) //changing the format a bit from MDS replies to support proper sorting
+		fileName = fmt.Sprintf("%v_%v", persistTime.Format("2006-01-02T15-04-05"), replyBytes.ReplyId) //changing the format a bit from MDS replies to support proper sorting
 		for fileIndex := len(files) - 1; fileIndex >= 0; fileIndex-- {
 			file := files[fileIndex]
 			if strings.HasSuffix(file, replyBytes.ReplyId) {
@@ -303,7 +319,7 @@ func (mgs *MGSInteractor) persistResult(replyBytes AgentResultLocalStoreData) (e
 			log.Debugf("persisting reply in %v failed with error %v", absoluteFileName, err)
 		}
 	}
-	return err
+	return fileName, err
 }
 
 // getFailedReplyDirectory returns path to mgs replies folder
@@ -332,6 +348,7 @@ externalLoop:
 	for retryNo := 0; retryNo < totalNoOfRetries; retryNo++ {
 		// increment retries count
 		docResult.IncrementRetries()
+		log.Debugf("retry count for the message id: %s -> current: %v - total: %v", agentMessageUUID, retryNo+1, docResult.GetRetryNumber())
 		err := mgs.sendReplyToMGS(docResult)
 		persist := AgentResultLocalStoreData{
 			AgentResult: docResult.GetResult(),
@@ -347,15 +364,16 @@ externalLoop:
 			log.Errorf("error while sending reply %v to MGS - %v ", agentMessageUUID, err)
 		}
 		select {
-		case <-time.After(time.Duration(docResult.GetBackOffSecond()) * time.Second):
-			if docResult.ShouldPersistData() && ((retryNo + 1) == totalNoOfRetries) {
+		case <-time.After(docResult.GetBackOffSecond(retryNo)):
+			if docResult.ShouldPersistData() && ((retryNo+1) == totalNoOfRetries || retryNo == 0) {
 				log.Warnf("no ack received while sending reply %v", agentMessageUUID)
-				persist.RetryNumber = docResult.GetRetryNumber()
-				mgs.persistResult(persist)
+				backupFile, _ := mgs.persistResult(persist)
+				result.backupFile = backupFile
 			}
 		case <-replyAckChan:
 			log.Debugf("received reply ack id %v", agentMessageUUID)
 			if result.backupFile != "" {
+				log.Debugf("deleting reply file: %s", result.backupFile)
 				mgs.deleteFailedReply(log, result.backupFile)
 			}
 			break externalLoop
@@ -473,8 +491,5 @@ func (mgs *MGSInteractor) filterReplies(unfilteredReplies []string) (replies []s
 }
 
 func (mgs *MGSInteractor) isTempError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "ws not initialized still")
+	return err != nil && strings.Contains(err.Error(), "ws not initialized still")
 }
