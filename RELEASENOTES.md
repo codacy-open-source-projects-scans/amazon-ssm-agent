@@ -1,5 +1,85 @@
 Latest
 ===============
+- Migrate from aws-sdk-go v1 to aws-sdk-go-v2
+
+3.3.5390.0
+===============
+- Bump github.com/gorilla/websocket from v1.4.2 to v1.5.3
+- Bump golang.org/x/crypto from v0.53.0 to v0.56.0
+- Bump golang.org/x/net from v0.56.0 to v0.57.0
+- Bump golang.org/x/sys from v0.46.0 to v0.47.0
+- Upgrade GoLang version from 1.25 to 1.26
+- Mint control-channel token after dial to fix AZ-fault token expiry
+- Resume patch documents interrupted by an external shutdown
+- Use systemctl for systemd in aws: configureDocker on Amazon Linux
+- Update greengrass component version to 1.3.5
+
+3.3.5226.0
+===============
+- Add bounds check for HeaderLength in AgentMessage Deserialize
+- Bump github.com/go-git/go-git/v5 to v5.19.2
+- Bump golang.org/x/sync to v0.21.0
+- Detect Azure Linux and potential future unregistered Linux platforms
+- Fix Windows session command parsing by removing shlex
+- Fix shell injection in Windows domainjoin plugin parameters
+- Prevent control channel deadlock on ProcessorBufferFull
+- Revert migration from aws-sdk-go v1 to aws-sdk-go-v2 change
+- Update the logic for loading RegistrationInfo
+- Upgrade Go version to 1.25.13
+
+3.3.5068.0
+===============
+- Migrate from aws-sdk-go v1 to aws-sdk-go-v2
+- Fix flaky registration/connection channel tests
+- Sync AWS SDK fork in extra/ with multicloud vendor changes
+- Harden function create file with permissions in a single syscall
+- Upgrade Go version to 1.25.12
+- Bump golang.org/x/net@v0.55.0 to golang.org/x/net@v0.56.0
+- Fix loopback bypass in remote-host port forwarding denylist
+
+3.3.4851.0
+===============
+- Add ECS/EKS credential endpoints and loopback to port-forward denylist
+- Canonicalize IP addresses before port-forwarding denylist check
+- Pass the ActiveDirectory domain password via stdin using -y /dev/stdin instead of the -w flag
+- Fix false StuckAtInProgress timeout for associations with rate >= 2h
+- Fix non-interactive session big file transfer issues
+- Prevent ssm-user race condition with flock-based serialization
+- Send AWS::EC2::Instance as source type when registered with provider EC2
+- Validate process name in orphan worker detection
+
+3.3.4793.0
+===============
+- Add multicloud support enabling SSM Agent registration with Azure cloud providers
+- Add support for the upcoming public key in the agent code
+
+3.3.4624.0
+===============
+- Bump golang.org/x/crypto from v0.51.0 to v0.52.0
+- Bump golang.org/x/net from v0.54.0 to v0.55.0
+- Enforce directory boundary in BuildSafePath
+- Fix visibility issue with Bottlerocket OS in document output
+- Update go-git from v5.17.1 to v5.19.1
+
+3.3.4515.0
+===============
+- Bump golang.org/x/net from v0.48.0 to v0.53.0
+- Quit if sysprep failed and log its current state
+- Remove attached legacy cloudwatch plugin packages
+- Upgrade Go version to 1.25.10
+- Use BuildSafePath wherever it is applicable
+
+3.3.4364.0
+===============
+- Add OOM killer protection to systemd service files
+- Apply more sanitation to file and registry inventory gatherers
+- Bump go-git to v5.17.1
+- Deprecate legacy cloudwatch plugin
+- Preserve network error details in credential refresher SSM API failures
+- Upgrade Go version to 1.25.9
+
+3.3.4268.0
+===============
 - Add SSM Distributor support for Bottlerocket OS
 - Implement flush credentials command in ssm-cli
 - Log ec2messages access denied as debug instead of error to reduce log noise
@@ -313,7 +393,7 @@ Latest
 3.2.2016.0
 ===============
 - Added telemetry for agent core in-proc executor usage
-- Added retries for Agent installation with snap on Greengrass 
+- Added retries for Agent installation with snap on Greengrass
 - Added code to update Agent config to use only Onprem Identity in Greengrass
 - Added support for macOS 14 (Sonoma)
 - Added Onprem registration support using ssm-setup-cli
@@ -415,7 +495,7 @@ Latest
 ===============
 - Add EC2 credential fallback for AssumeRoleUnauthorizedAccess error
 - Add CloudWatch log upload support for document and session worker
-- Add set-hostname support in domainjoin plugin for windows 
+- Add set-hostname support in domainjoin plugin for windows
 - Add wait time in Agent updater to avoid installation issues caused during reboots initiated by domainjoin plugin
 - Add support for AlmaLinux
 - Fix KeepHostName parameter without DNS IP address parameter in domainJoin plugin
@@ -715,7 +795,7 @@ Latest
 - Added a workaround for MacOS kernel bug that sometimes kept RunCommand from launching
 - Added a workaround for log file contention on Windows
 - Added synchronization to RunCommand service stop
-- Changed hibernation log level  
+- Changed hibernation log level
 - MacOS executables are now signed
 - Removed delay in non-interactive session type
 
@@ -839,7 +919,7 @@ Latest
 - Fix to consider status of all plugin steps in document after system restart
 - Fix bug capturing rpm install exit code
 - Handle sourceInfo json sent from CLI in downloadContent plugin
-- Optimize agent startup time by removing additional wait times 
+- Optimize agent startup time by removing additional wait times
 - Refactor makefile
 - Replace master branch with mainline branch
 - Upgrade aws-sdk-go to latest version(v1.35.23)
@@ -890,7 +970,7 @@ Latest
 - Added support for TCP multiplexing in port plugin
 - Fix for s3Upload to retry with an exponential backoff when uploading logs
 - Fix for startup modules to handle panic
-- Fix for systemd configuration to always restart the agent when it exits for any reason 
+- Fix for systemd configuration to always restart the agent when it exits for any reason
 
 3.0.196.0
 ===============
@@ -946,7 +1026,7 @@ Latest
 - Add support for large inventory items
 - Add update lock so only one update can execute at a time
 - Bug fix for cross region s3 upload
-- Bug fix for github build 
+- Bug fix for github build
 - Bug fixes for CloudWatch logs
 - Updated packaging dependencies
 
@@ -992,7 +1072,7 @@ Latest
 ===============
 - Bug fix for metadata service V2
 - Update Golang version 1.12 for travis
-- Optimize session manager retry logic 
+- Optimize session manager retry logic
 
 2.3.786.0
 ===============
@@ -1003,8 +1083,8 @@ Latest
 2.3.772.0
 ===============
 - Upgrade AWS SDK
-- Add logging for fingerprint generation 
- 
+- Add logging for fingerprint generation
+
 2.3.760.0
 ===============
 - Session manager supports handling of Task metadata
@@ -1017,7 +1097,7 @@ Latest
 ===============
 - Terminate port forwarding session on receiving TerminateSession flag
 - Bug fix to reload SSM client if region has not been initialize correctly
-- Bug fix for retrieval of user groups on Linux 
+- Bug fix for retrieval of user groups on Linux
 
 2.3.722.0
 ===============
@@ -1033,19 +1113,19 @@ Latest
 
 2.3.707.0
 ===============
-- Bug fix for characters dropping from session manager shell output 
+- Bug fix for characters dropping from session manager shell output
 - Bug fix for session manager freezing caused by non utf8 character
 - Switch the request protocol order for getting S3 Header
 - Keep port forwarding session open until session is terminated
 
 2.3.701.0
 ===============
-- Send platform type information in controlChannel input 
+- Send platform type information in controlChannel input
 
 2.3.687.0
 ===============
 - Bug fix for runPowershellScript plugin on linux platform
-- Add support for document 2.x version to ssm-cli 
+- Add support for document 2.x version to ssm-cli
 
 2.3.680.0
 ===============
@@ -1058,7 +1138,7 @@ Latest
 
 2.3.668.0
 ===============
-- Add Session Manager InteractiveCommands plugin	
+- Add Session Manager InteractiveCommands plugin
 - Bug fix for log formatting issue for session manager
 
 2.3.662.0
@@ -1178,7 +1258,7 @@ NOTE: This build should not be installed for Windows since you might see the err
 ===============
 - Bug fix to clean the orchestration directory
 - Streaming AWS Systems Manager Run Command output to CloudWatch Logs
-- Reducing number of retries for serial port opening 
+- Reducing number of retries for serial port opening
 - Add retry logic to installation verification
 
 2.2.619.0
@@ -1235,7 +1315,7 @@ NOTE: There is a known issue in this build that can cause Windows instances to s
 
 2.2.120.0
 ===============
-NOTE: There is a known issue in this build that can cause Windows instances to stop processing commands and associations. The issue is resolved in build versions>2.2.136.0   
+NOTE: There is a known issue in this build that can cause Windows instances to stop processing commands and associations. The issue is resolved in build versions>2.2.136.0
 - Various bug fixes.
 
 2.2.103.0

@@ -27,7 +27,7 @@ import (
 	logmocks "github.com/aws/amazon-ssm-agent/agent/mocks/log"
 	"github.com/aws/amazon-ssm-agent/agent/ssm/authtokenrequest"
 
-	"github.com/aws/aws-sdk-go/service/ssm"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/stretchr/testify/assert"
@@ -68,7 +68,7 @@ func TestRetrieve_ShouldReturnValidToken(t *testing.T) {
 			shouldRotate: false,
 		},
 	}
-	cred, err := testProvider.Retrieve()
+	cred, err := testProvider.Retrieve(context.TODO())
 	assert.NoError(t, err)
 	assert.Equal(t, accessKeyID, cred.AccessKeyID)
 	assert.Equal(t, secretAccessKey, cred.SecretAccessKey)
@@ -99,7 +99,7 @@ func TestRetrieve_ShouldUpdateKeyPair_Error(t *testing.T) {
 			errList:      []error{nil, fmt.Errorf("SomeError")},
 		},
 	}
-	_, err := testProvider.Retrieve()
+	_, err := testProvider.Retrieve(context.TODO())
 	assert.NoError(t, err)
 	assert.Equal(t, 0, client.updateCalled)
 }
@@ -115,7 +115,7 @@ func TestRetrieve_ShouldFailOnError(t *testing.T) {
 			errList: []error{machineFingerprintError},
 		},
 	}
-	_, err := testProvider.Retrieve()
+	_, err := testProvider.Retrieve(context.TODO())
 	assert.True(t, strings.Contains(err.Error(), machineFingerprintError.Error()))
 
 	// Fail on requestManagedInstanceRoleTokenError
@@ -128,7 +128,7 @@ func TestRetrieve_ShouldFailOnError(t *testing.T) {
 		log:              logmocks.NewMockLog(),
 		registrationInfo: &registrationStub{},
 	}
-	_, err = testProvider.Retrieve()
+	_, err = testProvider.Retrieve(context.TODO())
 	assert.True(t, strings.Contains(err.Error(), requestManagedInstanceRoleTokenError.Error()))
 }
 
@@ -290,6 +290,7 @@ type registrationStub struct {
 	fingerprint      string
 	publicKey        string
 	privateKey       string
+	provider         string
 	keyType          string
 	hasCreds         bool
 	shouldRotate     bool
@@ -327,6 +328,10 @@ func (r *registrationStub) PrivateKey(log log.T, manifestFileNamePrefix, vaultKe
 
 func (r *registrationStub) PrivateKeyType(log log.T, manifestFileNamePrefix, vaultKey string) string {
 	return r.keyType
+}
+
+func (r *registrationStub) Provider(log log.T, manifestFileNamePrefix, vaultKey string) string {
+	return r.provider
 }
 
 func (r *registrationStub) GenerateKeyPair() (publicKey, privateKey, keyType string, err error) {

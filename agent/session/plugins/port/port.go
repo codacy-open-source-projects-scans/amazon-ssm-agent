@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/aws/amazon-ssm-agent/agent/appconfig"
 	"github.com/aws/amazon-ssm-agent/agent/context"
@@ -195,7 +196,6 @@ func (p *PortPlugin) execute(
 	defer func() {
 		p.stop()
 	}()
-
 	if err = p.initializeParameters(config); err != nil {
 		log.Error(err)
 		output.SetExitCode(appconfig.ErrorExitCode)
@@ -301,6 +301,39 @@ func (p *PortPlugin) initializeParameters(config agentContracts.Configuration) (
 	return
 }
 
+// canonicalizeIP strips zone identifiers and converts IPv4-mapped IPv6 addresses
+// to their IPv4 equivalent for consistent denylist comparison.
+func canonicalizeIP(host string) net.IP {
+	// Strip zone identifier (e.g., %eth0) which causes net.ParseIP to return nil
+	if idx := strings.IndexByte(host, '%'); idx != -1 {
+		host = host[:idx]
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+	// Convert IPv4-mapped IPv6 (::ffff:x.x.x.x) to IPv4 for consistent comparison
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return ip
+}
+
+// isDeniedAddressClass reports whether ip is loopback (127.0.0.0/8, ::1) or unspecified
+// (0.0.0.0, ::), covering the whole range rather than relying on literal enumeration.
+// Loopback has no legitimate remote-host-forwarding use case since it always resolves
+// to the agent's own instance; callers wanting the agent's own services should use the
+// localhost forwarding document (AWS-StartPortForwardingSession) instead. Unspecified
+// is included because Linux routes connect() to it via the loopback interface.
+//
+// Link-local (169.254.0.0/16, fe80::/10) is intentionally excluded: unlike loopback,
+// it can have legitimate remote-host targets (e.g. APIPA peers, IPv6 link-local-only
+// services), so known-sensitive endpoints in that range stay in the literal denylist
+// (DefaultDeniedPortForwardingRemoteIPs) instead of being blocked as a whole range.
+func isDeniedAddressClass(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsUnspecified()
+}
+
 // validateParameters validates port plugin parameters
 func (p *PortPlugin) validateParameters(portParameters PortParameters, config agentContracts.Configuration) (err error) {
 	if portParameters.PortNumber == "" {
@@ -317,13 +350,35 @@ func (p *PortPlugin) validateParameters(portParameters PortParameters, config ag
 		p.context.Log().Warn("Error retrieving vpc dns address: %v", err)
 	}
 
+	denyList := append(appConfig.Mgs.DeniedPortForwardingRemoteIPs, dnsAddress...)
+
+	// Check the raw host parameter as an IP literal before DNS resolution.
+	// This catches bypass attempts using zone identifiers or IPv4-mapped IPv6
+	// that may cause lookupHost to fail or return non-canonical addresses.
+	if hostIP := canonicalizeIP(portParameters.Host); hostIP != nil {
+		if isDeniedAddressClass(hostIP) {
+			return errors.New(fmt.Sprintf("Forwarding to IP address %s is forbidden.", portParameters.Host))
+		}
+		for _, address := range denyList {
+			if denyIP := canonicalizeIP(address); denyIP != nil && hostIP.Equal(denyIP) {
+				return errors.New(fmt.Sprintf("Forwarding to IP address %s is forbidden.", portParameters.Host))
+			}
+		}
+	}
+
 	resolvedAddresses, err := lookupHost(portParameters.Host)
 	if portParameters.Host != "" && err == nil {
 		for _, host := range resolvedAddresses {
 			// Port forwarding to IMDS, VPC DNS, and local IP address is not allowed
-			hostIPAddress := net.ParseIP(host)
-			for _, address := range append(appConfig.Mgs.DeniedPortForwardingRemoteIPs, dnsAddress...) {
-				if hostIPAddress.Equal(net.ParseIP(address)) {
+			hostIPAddress := canonicalizeIP(host)
+			if hostIPAddress == nil {
+				continue
+			}
+			if isDeniedAddressClass(hostIPAddress) {
+				return errors.New(fmt.Sprintf("Forwarding to IP address %s is forbidden.", portParameters.Host))
+			}
+			for _, address := range denyList {
+				if denyIP := canonicalizeIP(address); denyIP != nil && hostIPAddress.Equal(denyIP) {
 					return errors.New(fmt.Sprintf("Forwarding to IP address %s is forbidden.", portParameters.Host))
 				}
 			}

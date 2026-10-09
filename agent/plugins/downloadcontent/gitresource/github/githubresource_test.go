@@ -80,9 +80,10 @@ func TestGitResource_DownloadFile(t *testing.T) {
 
 	fileMock := filemock.FileSystemMock{}
 
-	fileMock.On("IsDirectory", appconfig.DownloadRoot).Return(true)
-	fileMock.On("Exists", appconfig.DownloadRoot).Return(true)
-	fileMock.On("MakeDirs", strings.TrimSuffix(appconfig.DownloadRoot, string(os.PathSeparator))).Return(nil)
+	cleanRoot := strings.TrimSuffix(appconfig.DownloadRoot, string(os.PathSeparator))
+	fileMock.On("IsDirectory", cleanRoot).Return(true)
+	fileMock.On("Exists", cleanRoot).Return(true)
+	fileMock.On("MakeDirs", cleanRoot).Return(nil)
 	fileMock.On("WriteFile", filepath.Join(appconfig.DownloadRoot, "file.ext"), mock.Anything).Return(nil)
 
 	err, result := resource.DownloadRemoteResource(&fileMock, "")
@@ -327,6 +328,11 @@ func TestGitResource_DownloadFileToDifferentName(t *testing.T) {
 	dirMetadata = nil
 
 	destPath := `/var/temp/my/filename`
+	// Production code normalizes the destination path via fileutil.BuildSafePath
+	// (which calls filepath.Clean), so on Windows the path separators are
+	// converted to backslashes. Mirror that here so mock expectations match
+	// the actual values the production code passes to the FileSystem methods.
+	cleanDestPath := filepath.Clean(destPath)
 
 	resource := NewResourceWithMockedClient(&clientMock)
 	clientMock.On("ParseGetOptions", logMock, info.GetOptions).Return(opt, nil)
@@ -334,10 +340,10 @@ func TestGitResource_DownloadFileToDifferentName(t *testing.T) {
 	clientMock.On("IsFileContentType", mock.AnythingOfType("*github.RepositoryContent")).Return(true)
 
 	fileMock := filemock.FileSystemMock{}
-	fileMock.On("IsDirectory", destPath).Return(false)
-	fileMock.On("Exists", destPath).Return(true)
-	fileMock.On("MakeDirs", filepath.Dir(destPath)).Return(nil)
-	fileMock.On("WriteFile", destPath, mock.Anything).Return(nil)
+	fileMock.On("IsDirectory", cleanDestPath).Return(false)
+	fileMock.On("Exists", cleanDestPath).Return(true)
+	fileMock.On("MakeDirs", filepath.Dir(cleanDestPath)).Return(nil)
+	fileMock.On("WriteFile", cleanDestPath, mock.Anything).Return(nil)
 
 	err, result := resource.DownloadRemoteResource(&fileMock, destPath)
 	clientMock.AssertExpectations(t)
@@ -345,7 +351,7 @@ func TestGitResource_DownloadFileToDifferentName(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, 1, len(result.Files))
-	assert.Equal(t, destPath, result.Files[0])
+	assert.Equal(t, cleanDestPath, result.Files[0])
 }
 
 type TokenMock struct {

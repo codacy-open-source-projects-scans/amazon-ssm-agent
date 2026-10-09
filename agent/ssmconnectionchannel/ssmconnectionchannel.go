@@ -40,7 +40,7 @@ var (
 	connectionChannelMutex = sync.RWMutex{}
 
 	// mdsSwitchChannel is used by MDSInteractor to switch ON/OFF MDS
-	mdsSwitchChannel = make(chan bool)
+	mdsSwitchChannel = make(chan bool, 1)
 )
 
 // SetConnectionChannel sets the Upstream SSM connection channel(MDS or MGS)
@@ -61,13 +61,10 @@ func SetConnectionChannel(context context.T, state MGSState) {
 
 	// case for MGS is successfully established
 	if state == MGSSuccess {
-		// If SSMConnectionChannel status is MGS, it means that the MDS shutdown was retried before.
-		// Hence, when we received MGS Success again, return from this function without trying to shut down MDS
 		if connectionChannel.SSMConnectionChannel == contracts.MGS {
 			return
 		}
 
-		// Shutdown MDS when MGS connection is successful
 		connectionChannel.SSMConnectionChannel = contracts.MGS
 		mdsSwitchChannel <- false
 		return

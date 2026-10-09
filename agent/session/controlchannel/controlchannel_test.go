@@ -34,8 +34,7 @@ import (
 	serviceMock "github.com/aws/amazon-ssm-agent/agent/session/service/mocks"
 	eventlogMock "github.com/aws/amazon-ssm-agent/agent/session/telemetry/mocks"
 	"github.com/aws/amazon-ssm-agent/agent/ssmconnectionchannel"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -55,7 +54,7 @@ var (
 	instanceId                          = "i-1234"
 	token                               = "token"
 	region                              = "us-east-1"
-	signer                              = &v4.Signer{Credentials: credentials.NewStaticCredentials("AKID", "SECRET", "SESSION")}
+	signer                              = v4.NewSigner()
 )
 
 func TestInitialize(t *testing.T) {
@@ -81,9 +80,8 @@ func initializeMocks() {
 func TestSetWebSocket(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	// SetWebSocket no longer calls CreateControlChannel; token is minted in Open() after dial
 	mockService = &serviceMock.Service{}
-	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
 	mockService.On("GetRegion").Return(region)
 	mockService.On("GetV4Signer").Return(signer)
 	mockWsChannel.On("Initialize",
@@ -104,15 +102,27 @@ func TestSetWebSocket(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
-func TestSetWebSocket_Failed(t *testing.T) {
+func TestSetWebSocket_InitializeFailed(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
-	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, fmt.Errorf("err1"))
+	// SetWebSocket no longer calls CreateControlChannel; token is minted in Open() after dial
+	mockService = &serviceMock.Service{}
+	mockService.On("GetRegion").Return(region)
+	mockService.On("GetV4Signer").Return(signer)
+	mockWsChannel.On("Initialize",
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything).Return(fmt.Errorf("initialize error"))
+
 	var ableToOpenMGSConnection uint32
-	var err error
 	resetConnectionChannel()
-	err = controlChannel.SetWebSocket(mockContext, mockService, &ableToOpenMGSConnection)
+	err := controlChannel.SetWebSocket(mockContext, mockService, &ableToOpenMGSConnection)
 
 	assert.Equal(t, len(ssmconnectionchannel.GetMDSSwitchChannel()), 0)
 	assert.Equal(t, ssmconnectionchannel.GetConnectionChannel(), contracts.MDS)
@@ -121,13 +131,19 @@ func TestSetWebSocket_Failed(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
-func TestSetWebSocket_AccessDenied_Failed(t *testing.T) {
+func TestOpen_TokenMintFailed_AccessDenied(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
 	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
 	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, fmt.Errorf("unexpected response from the service <AccessDeniedException></AccessDeniedException>"))
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
+	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("Close", mock.Anything).Return(nil)
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
+
 	var ableToOpenMGSConnection uint32
-	var err error
 	resetConnectionChannel()
 	// Stop MDS
 	go func() {
@@ -135,15 +151,16 @@ func TestSetWebSocket_AccessDenied_Failed(t *testing.T) {
 	}()
 	_ = <-ssmconnectionchannel.GetMDSSwitchChannel()
 
-	// When access denied, we should start MDS again
+	// When access denied during token mint, we should start MDS again
+	done := make(chan error, 1)
 	go func() {
-		err = controlChannel.SetWebSocket(mockContext, mockService, &ableToOpenMGSConnection)
+		done <- controlChannel.Open(mockContext, &ableToOpenMGSConnection)
 	}()
 
 	mgsSwitchCh := <-ssmconnectionchannel.GetMDSSwitchChannel()
 	assert.Equal(t, ssmconnectionchannel.GetConnectionChannel(), contracts.MDS)
 	assert.Equal(t, mgsSwitchCh, true)
-	time.Sleep(500 * time.Millisecond)
+	err := <-done
 	assert.NotNil(t, err)
 	mockWsChannel.AssertExpectations(t)
 	mockService.AssertExpectations(t)
@@ -152,11 +169,17 @@ func TestSetWebSocket_AccessDenied_Failed(t *testing.T) {
 func TestOpen(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("SetChannelToken", token).Return()
 	mockWsChannel.On("GetChannelToken").Return(token)
 	mockWsChannel.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockEventLog.On("SendAuditMessage")
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
 
 	// test open (includes SendMessage)
 	var ableToOpenMGSConnection uint32
@@ -165,34 +188,62 @@ func TestOpen(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, token, controlChannel.wsChannel.GetChannelToken())
 	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
-func TestOpen_Failed(t *testing.T) {
+func TestOpen_DialFailed(t *testing.T) {
+	initializeMocks()
 	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	controlChannel := getControlChannel()
+	controlChannel.wsChannel = mockWsChannel
 
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(fmt.Errorf("err1"))
-	mockWsChannel.On("GetChannelToken").Return(token)
 
-	// test open (includes SendMessage)
+	// test open dial failure
 	var ableToOpenMGSConnection uint32
 	err := controlChannel.Open(mockContext, &ableToOpenMGSConnection)
 
 	assert.Equal(t, len(ssmconnectionchannel.GetMDSSwitchChannel()), 0)
 	assert.Equal(t, ssmconnectionchannel.GetConnectionChannel(), contracts.MDS)
 	assert.NotNil(t, err)
-	assert.Equal(t, token, controlChannel.wsChannel.GetChannelToken())
 	mockWsChannel.AssertExpectations(t)
+}
+
+func TestOpen_TokenMintFailed(t *testing.T) {
+	initializeMocks()
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
+	controlChannel := getControlChannel()
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, fmt.Errorf("token mint error"))
+	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("Close", mock.Anything).Return(nil)
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
+
+	// test open token mint failure - should close the socket
+	var ableToOpenMGSConnection uint32
+	err := controlChannel.Open(mockContext, &ableToOpenMGSConnection)
+
+	assert.NotNil(t, err)
+	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
 func TestOpenHandlesNilAbleToOpenMGSConnection(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("SetChannelToken", token).Return()
 	mockWsChannel.On("GetChannelToken").Return(token)
 	mockWsChannel.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockEventLog.On("SendAuditMessage")
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
 
 	var ableToOpenMGSConnection *uint32 = nil
 	err := controlChannel.Open(mockContext, ableToOpenMGSConnection)
@@ -200,6 +251,7 @@ func TestOpenHandlesNilAbleToOpenMGSConnection(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, token, controlChannel.wsChannel.GetChannelToken())
 	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
 func TestOpenReportsBadMGSConnectionStatusIfChannelCannotBeOpened(t *testing.T) {
@@ -215,7 +267,7 @@ func TestOpenReportsBadMGSConnectionStatusIfChannelCannotBeOpened(t *testing.T) 
 	controlChannel.Open(mockContext, &ableToOpenMGSConnection)
 	assert.Equal(t, len(ssmconnectionchannel.GetMDSSwitchChannel()), 0)
 	assert.Equal(t, ssmconnectionchannel.GetConnectionChannel(), contracts.MDS)
-	mockWsChannel.AssertExpectations(t)
+	mockWsChannelForChannelCannotBeOpenedTest.AssertExpectations(t)
 	assert.False(t, atomic.LoadUint32(&ableToOpenMGSConnection) != 0)
 }
 
@@ -244,12 +296,18 @@ func TestGetControlChannelTokenHandlesNilAbleToOpenMGSConnection(t *testing.T) {
 func TestReconnect(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	mockWsChannel.On("Close", mock.Anything).Return(nil)
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("SetChannelToken", token).Return()
 	mockWsChannel.On("GetChannelToken").Return(token)
 	mockWsChannel.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockEventLog.On("SendAuditMessage")
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
 
 	resetConnectionChannel()
 	// test reconnect
@@ -263,32 +321,33 @@ func TestReconnect(t *testing.T) {
 	assert.Equal(t, mgsSwitchCh, false)
 	assert.Equal(t, token, controlChannel.wsChannel.GetChannelToken())
 	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
 func resetConnectionChannel() {
-	go func() {
-		ssmconnectionchannel.SetConnectionChannel(mockContext, ssmconnectionchannel.MGSFailedDueToAccessDenied)
-	}()
-	go func() {
-		select {
-		case <-time.After(500 * time.Millisecond):
-			break
-		case <-ssmconnectionchannel.GetMDSSwitchChannel():
-			break
-		}
-	}()
-	time.Sleep(500 * time.Millisecond)
+	ssmconnectionchannel.SetConnectionChannel(mockContext, ssmconnectionchannel.MGSFailedDueToAccessDenied)
+	// Drain any pending signal from the channel
+	select {
+	case <-ssmconnectionchannel.GetMDSSwitchChannel():
+	default:
+	}
 }
 
 func TestReconnectReportsHealthyMGSConnectionIfSuccessful(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	mockWsChannel.On("Close", mock.Anything).Return(nil)
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("SetChannelToken", token).Return()
 	mockWsChannel.On("GetChannelToken").Return(token)
 	mockWsChannel.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockEventLog.On("SendAuditMessage")
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
 
 	resetConnectionChannel()
 	// test reconnect
@@ -304,17 +363,24 @@ func TestReconnectReportsHealthyMGSConnectionIfSuccessful(t *testing.T) {
 	assert.True(t, atomic.LoadUint32(&ableToOpenMGSConnection) != 0)
 	assert.Equal(t, contracts.MGS, ssmconnectionchannel.GetConnectionChannel())
 	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
 func TestReconnectUpdatesSSMConnectionChannelIfSuccessful(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	mockWsChannel.On("Close", mock.Anything).Return(nil)
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("SetChannelToken", token).Return()
 	mockWsChannel.On("GetChannelToken").Return(token)
 	mockWsChannel.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockEventLog.On("SendAuditMessage")
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
 
 	var ableToOpenMGSConnection uint32
 	atomic.StoreUint32(&ableToOpenMGSConnection, 0)
@@ -326,17 +392,24 @@ func TestReconnectUpdatesSSMConnectionChannelIfSuccessful(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, contracts.MGS, ssmconnectionchannel.GetConnectionChannel())
 	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
 func TestReconnectHandlesNilAbleToOpenMGSConnection(t *testing.T) {
 	initializeMocks()
 	controlChannel := getControlChannel()
-
+	createControlChannelOutput := service.CreateControlChannelOutput{TokenValue: &token}
+	mockService = &serviceMock.Service{}
+	mockService.On("CreateControlChannel", mock.Anything, mock.Anything, mock.AnythingOfType("string")).Return(&createControlChannelOutput, nil)
+	mockWsChannel = &communicatorMocks.IWebSocketChannel{}
 	mockWsChannel.On("Close", mock.Anything).Return(nil)
 	mockWsChannel.On("Open", mock.Anything, mock.Anything).Return(nil)
+	mockWsChannel.On("SetChannelToken", token).Return()
 	mockWsChannel.On("GetChannelToken").Return(token)
 	mockWsChannel.On("SendMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	mockEventLog.On("SendAuditMessage")
+	controlChannel.wsChannel = mockWsChannel
+	controlChannel.Service = mockService
 
 	// test reconnect
 	var ableToOpenMGSConnection *uint32 = nil
@@ -345,6 +418,7 @@ func TestReconnectHandlesNilAbleToOpenMGSConnection(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, token, controlChannel.wsChannel.GetChannelToken())
 	mockWsChannel.AssertExpectations(t)
+	mockService.AssertExpectations(t)
 }
 
 func TestClose(t *testing.T) {

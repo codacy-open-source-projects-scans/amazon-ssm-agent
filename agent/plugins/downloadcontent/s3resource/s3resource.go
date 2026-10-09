@@ -179,7 +179,7 @@ func (s3 *S3Resource) DownloadRemoteResource(filesys filemanager.FileSystem, des
 			destinationFile := filepath.Base(unescapedURL)
 
 			//when the s3 key has sub-folders leading to files, those sub-folders need to be created as well
-			localFilePath = fileutil.BuildPath(destPath, filepath.Dir(subFolderPath))
+			localFilePath = fileutil.BuildSafePath(destPath, filepath.Dir(subFolderPath))
 			if !isDirTypeDownloaded {
 				// if the file path provided exists as a directory or if it is in the format,
 				// that would be the localFilePath
@@ -226,7 +226,12 @@ func (s3 *S3Resource) getS3BucketURLString() (Url *url.URL, err error) {
 		return nil, err
 	}
 
-	bucketURL := "https://" + endpoint + "/" + s3.s3Object.Bucket
+	var bucketURL string
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		bucketURL = endpoint + "/" + s3.s3Object.Bucket
+	} else {
+		bucketURL = "https://" + endpoint + "/" + s3.s3Object.Bucket
+	}
 	return url.Parse(bucketURL)
 }
 

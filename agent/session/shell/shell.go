@@ -48,7 +48,7 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/session/shell/execcmd"
 	"github.com/aws/amazon-ssm-agent/agent/task"
 	"github.com/aws/amazon-ssm-agent/common/ansiprocessing"
-	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	cloudwatchlogstypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 )
 
 // Plugin is the type for the plugin.
@@ -107,7 +107,7 @@ func NewPlugin(context context.T, name string) (*ShellPlugin, error) {
 func (p *ShellPlugin) validate(config agentContracts.Configuration) error {
 	log := p.context.Log()
 	if config.CloudWatchLogGroup != "" {
-		var logGroup *cloudwatchlogs.LogGroup
+		var logGroup *cloudwatchlogstypes.LogGroup
 		var logGroupExists bool
 		if logGroupExists, logGroup = p.logger.cwl.IsLogGroupPresent(config.CloudWatchLogGroup); !logGroupExists {
 			log.Warnf("The CloudWatch log group specified in session preferences either does not exist or unable to validate its existence. " +
@@ -527,8 +527,11 @@ func (p *ShellPlugin) processCommandsWithOutputStreamSeparate(cancelled chan boo
 		p.sendExitCode(log, ipcFile, commandExitCode)
 	}
 
-	// Call datachannel PrepareToCloseChannel so all messages in the buffer are sent
-	p.dataChannel.PrepareToCloseChannel(log)
+	// Wait for outgoing buffer to fully drain before closing for NoninteractiveSession.
+	// Only used when SeparateOutputStream enabled,
+	// The pipe-based output sends data while the command runs, so the buffer may still have
+	// unacknowledged messages after pipe EOF. Wait as long as progress is being made.
+	p.dataChannel.WaitForBufferToDrain(log, 2*time.Second, 30*time.Second)
 
 	// Send session status as Terminating to service on completing command execution
 	if err := p.dataChannel.SendAgentSessionStateMessage(log, mgsContracts.Terminating); err != nil {
@@ -764,6 +767,8 @@ func (p *ShellPlugin) setupRoutineToWriteCmdPipelineOutput(log log.T, ipcFile *o
 			outputPrefix = p.stdoutPrefix
 		}
 
+		bufferedPipe := bufio.NewReaderSize(pipe, mgsConfig.StreamDataPayloadSize)
+
 		prefixLen := len(outputPrefix)
 		if prefixLen > 0 {
 			r := strings.NewReader(outputPrefix)
@@ -777,33 +782,54 @@ func (p *ShellPlugin) setupRoutineToWriteCmdPipelineOutput(log log.T, ipcFile *o
 		prefix = prefix[:prefixLen]
 		outputBytes := make([]byte, mgsConfig.StreamDataPayloadSize-prefixLen)
 		needPrefix := true
+		// processOutput handles prefix logic and sends data to the data channel.
+		processOutput := func(data []byte, dataLen int) error {
+			if dataLen == 0 {
+				return nil
+			}
+			if needPrefix {
+				unprocessedBuf.Write(prefix)
+			}
+			if data[dataLen-1] != '\n' {
+				needPrefix = false
+			} else {
+				needPrefix = true
+			}
+			var err error
+			if unprocessedBuf, err = p.processStdoutData(log, data, dataLen, unprocessedBuf, ipcFile, payloadType); err != nil {
+				return err
+			}
+			return nil
+		}
+
 		for {
 			if p.dataChannel.IsActive() {
-				outputBytesLen, err := pipe.Read(outputBytes)
-				if err == io.EOF {
-					log.Debugf("Pipeline closed, finish pipeline reading. Is StdErr pipe: %t", isStderr)
-					done <- appconfig.SuccessExitCode
-					break
-				} else if err != nil {
-					log.Errorf("Failed to read from command output pipeline: %s", err)
+				outputBytesLen, err := bufferedPipe.Read(outputBytes)
+				if err != nil {
+					if outputBytesLen > 0 {
+						if procErr := processOutput(outputBytes, outputBytesLen); procErr != nil {
+							log.Errorf("Error processing command pipeline output data, %v", procErr)
+							done <- appconfig.ErrorExitCode
+							return
+						}
+					}
+					if err == io.EOF {
+						log.Debugf("Pipeline closed, finish pipeline reading. Is StdErr pipe: %t", isStderr)
+						done <- appconfig.SuccessExitCode
+					} else {
+						log.Errorf("Failed to read from command output pipeline: %s", err)
+						done <- appconfig.ErrorExitCode
+					}
+					return
+				}
+				if procErr := processOutput(outputBytes, outputBytesLen); procErr != nil {
+					log.Errorf("Error processing command pipeline output data, %v", procErr)
 					done <- appconfig.ErrorExitCode
 					break
 				}
-				// Add prefix for first none empty frame, later decide it based on content of last character
-				if needPrefix && outputBytesLen > 0 {
-					unprocessedBuf.Write(prefix)
-				}
-				if outputBytesLen > 0 && outputBytes[outputBytesLen-1] != '\n' {
-					needPrefix = false
-				} else {
-					needPrefix = true
-				}
-				// unprocessedBuf contains incomplete utf8 encoded unicode bytes returned after processing of stdoutBytes
-				if unprocessedBuf, err = p.processStdoutData(log, outputBytes, outputBytesLen, unprocessedBuf, ipcFile, payloadType); err != nil {
-					log.Errorf("Error processing command pipeline output data, %v", err)
-					done <- appconfig.ErrorExitCode
-					break
-				}
+				// Pace the sending to prevent flooding the websocket and filling the outgoing buffer.
+				// This matches the writePump behavior in the non-separate-output path.
+				time.Sleep(time.Millisecond)
 			} else {
 				log.Errorf("Data Channel not in active status")
 				done <- appconfig.ErrorExitCode

@@ -31,7 +31,7 @@ import (
 	"github.com/aws/amazon-ssm-agent/agent/updateutil/updateconstants"
 	"github.com/aws/amazon-ssm-agent/common/identity"
 	identityMock "github.com/aws/amazon-ssm-agent/common/identity/mocks"
-	ssmService "github.com/aws/aws-sdk-go/service/ssm"
+	ssmService "github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -174,6 +174,10 @@ func TestUpdateHealthCheck(t *testing.T) {
 	mockOnPremIdentity.On("IsIdentityEnvironment").Return(false)
 
 	ssmConnectionChannel := ""
+	sourceId := ""
+	sourceLocation := ""
+	sourceType := ""
+	computerName := ""
 
 	mockObj := ssm2.NewMockDefault()
 	mockObj.On(
@@ -184,7 +188,11 @@ func TestUpdateHealthCheck(t *testing.T) {
 		health.AgentName,
 		availabilityZone,
 		availabilityZoneId,
-		ssmConnectionChannel).Return(&ssmService.UpdateInstanceInformationOutput{}, nil)
+		ssmConnectionChannel,
+		sourceId,
+		sourceType,
+		sourceLocation,
+		computerName).Return(&ssmService.UpdateInstanceInformationOutput{}, nil)
 
 	// setup
 	newSsmSvc = func(context context.T) ssm.Service {

@@ -57,6 +57,11 @@ const (
 	GetWorkerHealthResult  TopicType = "GetWorkerHealthResult"
 	TerminateWorkerRequest TopicType = "TerminateWorkerRequest"
 	TerminateWorkerResult  TopicType = "TerminateWorkerResult"
+	// PrepareShutdownRequest tells a worker to make in-flight work reboot-safe WITHOUT
+	// terminating -- unlike TerminateWorkerRequest, which means "exit now". Sent from the SCM
+	// preshutdown handler, so preparation is ordered ahead of any process being killed.
+	PrepareShutdownRequest TopicType = "PrepareShutdownRequest"
+	PrepareShutdownResult  TopicType = "PrepareShutdownResult"
 )
 
 // CreateHealthRequest creates an instance of health request message
@@ -90,6 +95,48 @@ func CreateHealthResult(workerName string, workerType WorkerType, pid int) (*Mes
 	}
 
 	return message, nil
+}
+
+// PrepareShutdownResultPayload acknowledges that a worker received the shutdown notification and
+// prepared. It carries no per-document detail: preparation is a flag the worker's own document
+// paths read as they finish, so there is nothing to count at the moment it is acknowledged.
+type PrepareShutdownResultPayload struct {
+	SchemaVersion int
+	Name          string
+	WorkerType    WorkerType
+	Pid           int
+}
+
+// CreatePrepareShutdownRequest creates an instance of prepare-shutdown request message.
+func CreatePrepareShutdownRequest() *Message {
+	return &Message{
+		SchemaVersion: SchemaVersion,
+		Topic:         PrepareShutdownRequest,
+	}
+}
+
+// CreatePrepareShutdownResult creates an instance of prepare-shutdown result message.
+func CreatePrepareShutdownResult(
+	workerName string,
+	workerType WorkerType,
+	pid int) (*Message, error) {
+
+	payload := PrepareShutdownResultPayload{
+		SchemaVersion: SchemaVersion,
+		Name:          workerName,
+		WorkerType:    workerType,
+		Pid:           pid,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Message{
+		SchemaVersion: payload.SchemaVersion,
+		Topic:         PrepareShutdownResult,
+		Payload:       payloadBytes,
+	}, nil
 }
 
 // CreateTerminateWorkerRequest creates an instance of terminate worker request message

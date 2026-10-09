@@ -245,6 +245,11 @@ const (
 	DefaultSessionWorkersLimit    = 1000
 	DefaultSessionWorkersLimitMin = 1
 
+	// Control-channel websocket dial timeout in milliseconds
+	// 0 means Go no-timeout (pre-fix behavior, feature disabled);
+	// negative values are rejected → use default
+	DefaultControlChannelDialTimeoutMillis = 20000
+
 	// PluginNameStandardStream is the name for session manager standard stream plugin aka shell.
 	PluginNameStandardStream = "Standard_Stream"
 
@@ -266,8 +271,8 @@ const (
 	TelemetryDynamicConfigFileName = "telemetry_dynamic_config.json"
 )
 
-// Default deny list IP addresses for remote host port forwarding: IMDS (ipv4, ipv6); VPC (ipv4, ipv6); Amazon Time Sync (ipv4, ipv6); Amazon Windows license activation (2x ipv4, ipv6)
-var DefaultDeniedPortForwardingRemoteIPs = []string{"169.254.169.254", "fd00:ec2::254", "169.254.169.253", "fd00:ec2::253", "169.254.169.123", "fd00:ec2::123", "169.254.169.250", "169.254.169.251", "fd00:ec2::250"}
+// Default deny list IP addresses for remote host port forwarding: IMDS (ipv4, ipv6); VPC (ipv4, ipv6); Amazon Time Sync (ipv4, ipv6); Amazon Windows license activation (2x ipv4, ipv6); ECS task credentials (ipv4); EKS Pod Identity (ipv4, ipv6); Loopback (ipv4, ipv6)
+var DefaultDeniedPortForwardingRemoteIPs = []string{"169.254.169.254", "fd00:ec2::254", "169.254.169.253", "fd00:ec2::253", "169.254.169.123", "fd00:ec2::123", "169.254.169.250", "169.254.169.251", "fd00:ec2::250", "169.254.170.2", "169.254.170.23", "fd00:ec2::23", "127.0.0.1", "::1"}
 
 // Document versions that are supported by this Agent version.
 // Note that 1.1 and 2.1 are deprecated schemas and hence are not added here.
@@ -310,3 +315,21 @@ var DefaultIdentityConsumptionOrder = []string{
 }
 
 var DefaultCustomIdentityCredentialsProvider = "DEFAULT"
+
+type Provider string
+
+const (
+	EC2   Provider = "EC2"
+	Azure Provider = "Azure"
+
+	// AzureIMDSAPIVersion is the API version for Azure IMDS requests
+	AzureIMDSAPIVersion = "2025-04-07"
+)
+
+// AzureIMDSEndpoint is the Azure Instance Metadata Service endpoint
+var AzureIMDSEndpoint = "http://169.254.169.254/metadata/instance"
+
+var Providers = map[string]Provider{
+	"EC2":   EC2,
+	"Azure": Azure,
+}

@@ -38,7 +38,7 @@ import (
 	dataChannelMock "github.com/aws/amazon-ssm-agent/agent/session/datachannel/mocks"
 	execcmdMock "github.com/aws/amazon-ssm-agent/agent/session/shell/execcmd/mocks"
 	"github.com/aws/amazon-ssm-agent/agent/task"
-	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -53,7 +53,7 @@ var (
 	sessionId          = "sessionId"
 	sessionOwner       = "sessionOwner"
 	testCwLogGroupName = "testCW"
-	testCwlLogGroup    = cloudwatchlogs.LogGroup{
+	testCwlLogGroup    = cwtypes.LogGroup{
 		LogGroupName: &testCwLogGroupName,
 	}
 )
@@ -257,10 +257,10 @@ func (suite *ShellTestSuite) TestExecuteForNonInteractiveCommandsWithSeparateOut
 	suite.mockIohandler.On("SetOutput", mock.Anything).Return()
 	suite.mockIohandler.On("SetExitCode", mock.Anything).Return()
 	suite.mockDataChannel.On("IsActive").Return(true)
-	suite.mockDataChannel.On("PrepareToCloseChannel", mock.Anything).Return(nil).Times(1)
 	suite.mockDataChannel.On("SendAgentSessionStateMessage", mock.Anything, mgsContracts.Terminating).
 		Return(nil).Times(1)
 	suite.mockDataChannel.On("SendStreamDataMessage", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	suite.mockDataChannel.On("WaitForBufferToDrain", mock.Anything, mock.Anything, mock.Anything).Return()
 	suite.mockCmd.On("Start").Return(nil)
 	suite.mockCmd.On("Wait").Return(nil)
 	suite.mockCmd.On("Pid").Return(234)
