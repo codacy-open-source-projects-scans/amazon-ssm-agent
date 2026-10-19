@@ -141,8 +141,18 @@ func (i *Identity) CredentialsProvider() aws.CredentialsProvider {
 	i.shareLock.Lock()
 	defer i.shareLock.Unlock()
 
-	return i.credentialsProvider
+	if i.credentialsProvider == nil {
+		return nil
+	}
 
+	// Cache the client-facing provider so SDK clients don't fetch credentials per request.
+	if i.cachedCredsProvider == nil {
+		i.cachedCredsProvider = aws.NewCredentialsCache(i.credentialsProvider, func(o *aws.CredentialsCacheOptions) {
+			o.ExpiryWindow = 5 * time.Minute
+			o.ExpiryWindowJitterFrac = 0.5
+		})
+	}
+	return i.cachedCredsProvider
 }
 
 // IsIdentityEnvironment returns if instance is a ec2 instance
@@ -348,18 +358,11 @@ func (i *Identity) initEc2RoleProvider(endpointHelper endpoint.IEndpointHelper, 
 		IMDSClient:   i.Client,
 		InstanceInfo: instanceInfo,
 	}
-	// Wrap SSMEC2RoleProvider in a caching adapter so a
-	// RequestManagedInstanceRoleToken call isn't issued on every SDK attempt
-	// during the DHMC-fallback path. SSMEC2RoleProvider does not implement
-	// HandleFailToRefresh, so the underlying aws.CredentialsCache surfaces
-	// a failed Retrieve immediately instead of extending stale credentials.
-	cachedSsmEC2Provider := ec2roleprovider.NewCachedInnerProvider(ssmEC2RoleProvider)
-
 	sharedCredentialsProvider := sharedprovider.NewCredentialsProvider(i.Log)
 
 	innerProviders := &ec2roleprovider.EC2InnerProviders{
 		IPRProvider:               i.createIPRProvider(),
-		SsmEc2Provider:            cachedSsmEC2Provider,
+		SsmEc2Provider:            ssmEC2RoleProvider,
 		SharedCredentialsProvider: sharedCredentialsProvider,
 	}
 
@@ -421,7 +424,7 @@ func (i *Identity) initIMDSClient(cfg aws.Config) {
 		return
 	}
 
-	i.Client = newImdsClient(cfg)
+	i.Client = newImdsClient(cfg, func(o *imds.Options) { o.EnableFallback = aws.FalseTernary })
 }
 
 // initAuthRegisterService initializes the client used to make requests to RegisterManagedInstance
